@@ -6,11 +6,12 @@ from collections import defaultdict
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 from main import run_monte_carlo
-from wc_logic import get_countries, load_knockout_schedule
+from wc_logic import get_countries, load_knockout_schedule, load_schedule_presets
 
 # TODO: stałe do konfiga
 COUNTRIES_FILE = os.path.join(BASE_DIR, "countries.txt")
@@ -61,7 +62,8 @@ def load_initial_data():
             home, away = [n.strip() for n in pair_str.split(" - ", 1)]
             group_schedule.setdefault(group_name.strip(), []).append((home, away))
     knockout_raw = load_knockout_schedule(SCHEDULE_KNOCKOUT_FILE)
-    return groups_data, group_schedule, knockout_raw
+    schedule_presets = load_schedule_presets(SCHEDULE_GROUPS_FILE)
+    return groups_data, group_schedule, knockout_raw, schedule_presets
 
 def _fmt_slot(slot) -> str:
     kind = slot[0]
@@ -244,6 +246,52 @@ def display_results(stats: dict):
     n = stats["n_simulations"]
     team_exit = stats["team_exit_stages"]
     # 1. Szansa na wygranie turnieju
+    def _bar(df, colorscale):
+        """Wykres słupkowy — poziomy lub pionowy zależnie od ustawienia użytkownika."""
+        horizontal = st.session_state.get("horizontal_charts", False)
+        if horizontal:
+            df = df.sort_values("Procent", ascending=True)
+            fig = px.bar(
+                df,
+                x="Procent",
+                y="Drużyna",
+                orientation="h",
+                color="Procent",
+                color_continuous_scale=colorscale,
+                text="Procent",
+                labels={"Procent": "%"},
+            )
+            fig.update_traces(texttemplate="%{text:.1f}%", textposition="auto", textfont=dict(size=15))
+            fig.update_layout(
+                coloraxis_showscale=False,
+                xaxis_title="Prawdopodobieństwo (%)",
+                yaxis_title=None,
+                height=max(320, len(df) * 26),
+                margin=dict(l=0, r=10, t=10, b=30),
+                yaxis=dict(automargin=True, tickfont=dict(size=13)),
+                xaxis=dict(automargin=True, tickfont=dict(size=12)),
+                font=dict(size=13),
+            )
+        else:
+            df = df.sort_values("Procent", ascending=False)
+            fig = px.bar(
+                df,
+                x="Drużyna",
+                y="Procent",
+                color="Procent",
+                color_continuous_scale=colorscale,
+                text="Procent",
+                labels={"Procent": "Prawdopodobieństwo (%)"},
+            )
+            fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+            fig.update_layout(
+                coloraxis_showscale=False,
+                yaxis_title="Prawdopodobieństwo (%)",
+                xaxis_tickangle=-40,
+                margin=dict(b=100),
+            )
+        return fig
+
     st.subheader("🏆 Szansa na wygranie turnieju")
     winner_df = (
         pd.DataFrame(
@@ -254,26 +302,9 @@ def display_results(stats: dict):
             columns=["Drużyna", "Procent"],
         )
         .query("Procent > 0")
-        .sort_values("Procent", ascending=False)
         .reset_index(drop=True)
     )
-    fig_win = px.bar(
-        winner_df,
-        x="Drużyna",
-        y="Procent",
-        color="Procent",
-        color_continuous_scale="YlOrRd",
-        text="Procent",
-        labels={"Procent": "Prawdopodobieństwo (%)"},
-    )
-    fig_win.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-    fig_win.update_layout(
-        coloraxis_showscale=False,
-        yaxis_title="Prawdopodobieństwo (%)",
-        xaxis_tickangle=-40,
-        margin=dict(b=100),
-    )
-    st.plotly_chart(fig_win, use_container_width=True)
+    st.plotly_chart(_bar(winner_df, "YlOrRd"), use_container_width=True)
     # 2. Wykresy "szansa na dotarcie do etapu X lub dalej"
     REACH_STAGES = [
         ("🥈 Szansa na dotarcie do finału",     ("F", "Zwycięzca"),              "Reds"),
@@ -293,26 +324,9 @@ def display_results(stats: dict):
                 columns=["Drużyna", "Procent"],
             )
             .query("Procent > 0")
-            .sort_values("Procent", ascending=False)
             .reset_index(drop=True)
         )
-        fig = px.bar(
-            df,
-            x="Drużyna",
-            y="Procent",
-            color="Procent",
-            color_continuous_scale=colorscale,
-            text="Procent",
-            labels={"Procent": "Prawdopodobieństwo (%)"},
-        )
-        fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-        fig.update_layout(
-            coloraxis_showscale=False,
-            yaxis_title="Prawdopodobieństwo (%)",
-            xaxis_tickangle=-40,
-            margin=dict(b=100),
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(_bar(df, colorscale), use_container_width=True)
     # 3. Heatmapa rozkładu etapów
     st.subheader("📊 Rozkład etapów dla każdej drużyny (%)")
     all_teams = sorted(team_exit.keys())
@@ -331,21 +345,35 @@ def display_results(stats: dict):
         .drop(columns=["_sort"])[STAGES_ORDER]
     )
     heat_df.columns = [STAGES_LABELS[c] for c in heat_df.columns]
-    fig_heat = px.imshow(
-        heat_df,
-        color_continuous_scale="Blues",
-        labels=dict(color="%"),
-        aspect="auto",
-        text_auto=".1f",
-    )
-    fig_heat.update_layout(
-        height=max(500, len(all_teams) * 22),
-        xaxis_title="Etap turnieju",
-        yaxis_title=None,
-        coloraxis_colorbar=dict(title="%"),
-        margin=dict(l=160),
-    )
-    st.plotly_chart(fig_heat, use_container_width=True)
+    if st.session_state.get("horizontal_charts", False):
+        # Mobile: tabela z kolorowym tłem — przewijalna, pinch-zoomowalna
+        st.caption("Przewiń w poziomie, żeby zobaczyć wszystkie etapy.")
+        styled = (
+            heat_df.style
+            .background_gradient(cmap="Blues", axis=None, vmin=0)
+            .format("{:.1f}%")
+            .set_properties(**{"font-size": "13px", "text-align": "center"})
+        )
+        st.dataframe(styled, use_container_width=True, height=min(600, max(300, len(all_teams) * 28 + 40)))
+    else:
+        fig_heat = px.imshow(
+            heat_df,
+            color_continuous_scale="Blues",
+            labels=dict(color="%"),
+            aspect="auto",
+            text_auto=".1f",
+        )
+        fig_heat.update_traces(textfont=dict(size=11))
+        fig_heat.update_layout(
+            height=max(500, len(all_teams) * 22),
+            xaxis_title="Etap turnieju",
+            yaxis_title=None,
+            coloraxis_colorbar=dict(title="%"),
+            margin=dict(l=0, r=20, t=10, b=30),
+            yaxis=dict(automargin=True),
+            font=dict(size=12),
+        )
+        st.plotly_chart(fig_heat, use_container_width=True)
     # 4. Najczęstsze spotkania w fazie pucharowej
     st.subheader("⚔️ Najczęstsze spotkania w fazie pucharowej (top 20)")
     ko_rows = []
@@ -417,38 +445,63 @@ st.set_page_config(
 )
 st.title("⚽ Symulator Mistrzostw Świata")
 st.caption("Analiza Monte Carlo — rozkłady prawdopodobieństwa wyników wszystkich drużyn")
-groups_data, group_schedule, knockout_raw = load_initial_data()
+groups_data, group_schedule, knockout_raw, schedule_presets = load_initial_data()
+
+# Wykrywanie szerokości ekranu przy pierwszym ładowaniu — ustawia domyślną orientację wykresów
+if "horizontal_charts" not in st.session_state:
+    components.html(
+        """
+        <script>
+        const width = window.innerWidth ||
+                      document.documentElement.clientWidth ||
+                      document.body.clientWidth;
+        const isMobile = width < 768;
+        const msg = JSON.stringify({type: "streamlit:setComponentValue", value: isMobile});
+        window.parent.postMessage(msg, "*");
+        </script>
+        """,
+        height=0,
+    )
+    st.session_state["horizontal_charts"] = False  # fallback: pionowe (desktop)
+
 # Pasek boczny
 with st.sidebar:
     st.header("⚙️ Parametry symulacji")
-    lambda_base = st.number_input(
-        "lambda_base",
-        min_value=0.5,
-        max_value=5.0,
-        value=1.3,
-        step=0.05,
-        format="%.2f",
-        help="Bazowe oczekiwane gole na drużynę przy równych ELO (typowo 1.0–1.5 dla MŚ)",
-    )
-    k = st.number_input(
-        "k (skala wpływu ELO)",
-        min_value=0.01,
-        max_value=2.0,
-        value=0.25,
-        step=0.01,
-        format="%.2f",
-        help="Jak mocno różnica ELO skaluje oczekiwane gole",
-    )
-    n_simulations = st.number_input(
-        "Liczba symulacji",
-        min_value=1,
-        max_value=100_000,
-        value=1000,
-        step=1,
-        help="Więcej symulacji = dokładniejsze wyniki, ale dłuższy czas obliczeń",
-    )
+    with st.form("sim_params_form"):
+        lambda_base = st.number_input(
+            "lambda_base",
+            min_value=0.5,
+            max_value=5.0,
+            value=1.3,
+            step=0.05,
+            format="%.2f",
+            help="Bazowe oczekiwane gole na drużynę przy równych ELO (typowo 1.0–1.5 dla MŚ)",
+        )
+        k = st.number_input(
+            "k (skala wpływu ELO)",
+            min_value=0.01,
+            max_value=2.0,
+            value=0.25,
+            step=0.01,
+            format="%.2f",
+            help="Jak mocno różnica ELO skaluje oczekiwane gole",
+        )
+        n_simulations = st.number_input(
+            "Liczba symulacji",
+            min_value=1,
+            max_value=100_000,
+            value=1000,
+            step=1,
+            help="Więcej symulacji = dokładniejsze wyniki, ale dłuższy czas obliczeń",
+        )
+        st.divider()
+        run_btn = st.form_submit_button("▶ Uruchom symulację", type="primary", use_container_width=True)
     st.divider()
-    run_btn = st.button("▶ Uruchom symulację", type="primary", use_container_width=True)
+    st.checkbox(
+        "📱 Poziome wykresy",
+        key="horizontal_charts",
+        help="Włącz dla telefonów i wąskich ekranów. Na komputerze domyślnie wyłączone.",
+    )
 
 # Symulacja
 if run_btn:
@@ -479,6 +532,18 @@ tab_groups, tab_bracket, tab_results, tab_info = st.tabs(
 )
 
 with tab_groups:
+    # --- Checkbox: użyj wyników z pliku ---
+    n_presets = len(schedule_presets)
+    if n_presets:
+        use_presets = st.checkbox(
+            f"📥 Użyj prawdziwych wyników z harmonogramu ({n_presets} {'mecz' if n_presets == 1 else 'mecze' if n_presets in (2, 3, 4) else 'meczów'})",
+            value=True,
+            key="use_presets",
+            help="Odznacz, żeby zignorować wpisane wyniki i wygenerować cały turniej losowo.",
+        )
+    else:
+        use_presets = False
+
     # --- Expander: własne wyniki meczów grupowych ---
     with st.expander("✏️ Wprowadź własne wyniki meczów grupowych (opcjonalnie)", expanded=False):
         st.caption(
@@ -486,27 +551,38 @@ with tab_groups:
             "Pozostawienie pól pustych oznacza, że mecz zostanie rozegrany losowo."
         )
         fixed_inputs: dict[tuple[str, str], tuple[int, int]] = {}
-        for gname in sorted(group_schedule.keys()):
-            st.markdown(f"**Grupa {gname}**")
-            for home, away in group_schedule[gname]:
-                col_home, col_s1, col_dash, col_s2, col_away = st.columns([3, 1, 0.3, 1, 3])
-                col_home.markdown(f"<div style='padding-top:6px;text-align:right'>{home}</div>", unsafe_allow_html=True)
-                s1 = col_s1.number_input(
-                    "g1", min_value=0, max_value=30, value=None,
-                    key=f"fg_{gname}_{home}_{away}_1", label_visibility="collapsed"
-                )
-                col_dash.markdown("<div style='padding-top:6px;text-align:center'>–</div>", unsafe_allow_html=True)
-                s2 = col_s2.number_input(
-                    "g2", min_value=0, max_value=30, value=None,
-                    key=f"fg_{gname}_{home}_{away}_2", label_visibility="collapsed"
-                )
-                col_away.markdown(f"<div style='padding-top:6px'>{away}</div>", unsafe_allow_html=True)
-                if s1 is not None and s2 is not None:
-                    fixed_inputs[(home, away)] = (int(s1), int(s2))
-        st.session_state["fixed_group_results"] = fixed_inputs if fixed_inputs else None
-        n_fixed = len(fixed_inputs)
-        if n_fixed:
-            st.success(f"Zablokowano {n_fixed} {'mecz' if n_fixed == 1 else 'mecze' if n_fixed in (2, 3, 4) else 'meczów'}.")
+        # Klucz widgetów zależny od use_presets — wymusza reset wartości przy przełączeniu
+        preset_key_suffix = "on" if use_presets else "off"
+        with st.form("fixed_results_form"):
+            for gname in sorted(group_schedule.keys()):
+                st.markdown(f"**Grupa {gname}**")
+                for home, away in group_schedule[gname]:
+                    preset = schedule_presets.get((home, away)) if use_presets else None
+                    col_home, col_s1, col_dash, col_s2, col_away = st.columns([3, 1, 0.3, 1, 3])
+                    col_home.markdown(f"<div style='padding-top:6px;text-align:right'>{home}</div>", unsafe_allow_html=True)
+                    s1 = col_s1.number_input(
+                        "g1", min_value=0, max_value=30, value=preset[0] if preset is not None else None,
+                        key=f"fg_{gname}_{home}_{away}_1_{preset_key_suffix}", label_visibility="collapsed"
+                    )
+                    col_dash.markdown("<div style='padding-top:6px;text-align:center'>–</div>", unsafe_allow_html=True)
+                    s2 = col_s2.number_input(
+                        "g2", min_value=0, max_value=30, value=preset[1] if preset is not None else None,
+                        key=f"fg_{gname}_{home}_{away}_2_{preset_key_suffix}", label_visibility="collapsed"
+                    )
+                    col_away.markdown(f"<div style='padding-top:6px'>{away}</div>", unsafe_allow_html=True)
+                    if s1 is not None and s2 is not None:
+                        fixed_inputs[(home, away)] = (int(s1), int(s2))
+            apply_btn = st.form_submit_button("✅ Zastosuj wyniki", use_container_width=True)
+        if apply_btn:
+            st.session_state["fixed_group_results"] = fixed_inputs if fixed_inputs else None
+            n_fixed = len(fixed_inputs)
+            st.success(f"Zablokowano {n_fixed} {'mecz' if n_fixed == 1 else 'mecze' if n_fixed in (2, 3, 4) else 'meczów'}." if n_fixed else "Wyniki wyczyszczone — wszystkie mecze będą losowane.")
+        elif "fixed_group_results" not in st.session_state:
+            st.session_state["fixed_group_results"] = None
+        _saved = st.session_state.get("fixed_group_results")
+        if _saved:
+            n_saved = len(_saved)
+            st.info(f"Aktualnie zapisano: {n_saved} {'mecz' if n_saved == 1 else 'mecze' if n_saved in (2, 3, 4) else 'meczów'}.")
 
     _lb = st.session_state.get("stats", {}).get("last_bracket")
     if _lb:
