@@ -21,20 +21,35 @@ def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n
     team_exit_stages = defaultdict(list)
     group_meeting_counts = defaultdict(int)
     knockout_meeting_counts = defaultdict(int)
+    match_slot_pairs = defaultdict(lambda: defaultdict(int))
+    match_slot_winners = defaultdict(lambda: defaultdict(int))
+    group_standings_counts = defaultdict(lambda: defaultdict(int))
+    qualified_thirds_counts = defaultdict(int)
+    qualified_thirds_team_counts = defaultdict(int)
     last_bracket = None
+    #TODO: Wizualizacja w tqdm
     for i in range(n):
         if (i + 1) % 100 == 0:
             print(f"Symulacja {i + 1}/{n}...")
-        result = simulate_tournament_once(
-            original_elos, countries_by_name, groups, knockout_raw, lambda_base, k,
-            fixed_group_results=fixed_group_results
-        )
+        result = simulate_tournament_once(original_elos, countries_by_name, 
+            groups, knockout_raw, lambda_base, k, fixed_group_results=fixed_group_results)
         for country, stage in result["exit_stages"].items():
             team_exit_stages[country].append(stage)
         for t1, t2 in result["group_match_pairs"]:
             group_meeting_counts[frozenset({t1, t2})] += 1
         for t1, t2, stage in result["knockout_match_pairs"]:
             knockout_meeting_counts[(frozenset({t1, t2}), stage)] += 1
+        for detail in result["knockout_match_details"]:
+            mid = detail["match_id"]
+            pair = (detail["team1"], detail["team2"])
+            match_slot_pairs[mid][pair] += 1
+            match_slot_winners[mid][detail["winner"]] += 1
+        for gname, standings in result["group_standings"].items():
+            order = tuple(name for name, _ in standings)
+            group_standings_counts[gname][order] += 1
+        qualified_thirds_counts[result["qualified_thirds_ranked"]] += 1
+        for _, team_name in result["qualified_thirds_ranked"]:
+            qualified_thirds_team_counts[team_name] += 1
         last_bracket = {
             "knockout": result["knockout_match_details"],
             "groups": result["group_standings"],
@@ -44,6 +59,11 @@ def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n
         "team_exit_stages": dict(team_exit_stages),
         "group_meeting_counts": dict(group_meeting_counts),
         "knockout_meeting_counts": dict(knockout_meeting_counts),
+        "match_slot_pairs": {mid: dict(counts) for mid, counts in match_slot_pairs.items()},
+        "match_slot_winners": {mid: dict(counts) for mid, counts in match_slot_winners.items()},
+        "group_standings_counts": {gname: dict(counts) for gname, counts in group_standings_counts.items()},
+        "qualified_thirds_counts": dict(qualified_thirds_counts),
+        "qualified_thirds_team_counts": dict(qualified_thirds_team_counts),
         "n_simulations": n,
         "last_bracket": last_bracket,
     }

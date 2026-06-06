@@ -265,9 +265,9 @@ def parse_slot(slot_str):
         rest = slot_str[2:]
         try:
             int(rest)
-            # sama liczba po prefiksie → W/L to nazwa grupy, np. L_2
+            # sama liczba po prefiksie W/L to nazwa grupy, np. L_2
         except ValueError:
-            # nie jest liczbą → referencja do wyniku meczu, np. W_R_32_1
+            # nie jest liczbą - referencja do wyniku meczu, np. W_R_32_1
             kind = 'winner' if slot_str.startswith('W_') else 'loser'
             return (kind, rest)
     last_underscore = slot_str.rfind('_')
@@ -319,9 +319,7 @@ def simulate_tournament_once(original_elos, countries_by_name, groups, knockout_
                 'team2': m.country2.name,
                 'score1': m.score1,
                 'score2': m.score2,
-            }
-            for m in matches
-        ]
+            } for m in matches]
     exit_stage = {name: 'Grupa' for name in countries_by_name}
     qualified_thirds = select_qualified_thirds(groups)
     knockout_matches = [KnockoutMatch(mid, s1, s2) for mid, s1, s2 in knockout_raw]
@@ -343,8 +341,7 @@ def simulate_tournament_once(original_elos, countries_by_name, groups, knockout_
             'score2': km.score2,
             'winner': km.winner.name,
             'stage': stage,
-            'penalties': km.score1 == km.score2,
-        })
+            'penalties': km.score1 == km.score2})
         exit_stage[km.loser.name] = stage
     if 'F' in match_results:
         exit_stage[match_results['F'].winner.name] = 'Zwycięzca'
@@ -354,6 +351,11 @@ def simulate_tournament_once(original_elos, countries_by_name, groups, knockout_
         gname: [(c.name, dict(stats)) for c, stats in standings]
         for gname, standings in group_standings_by_name.items()
     }
+    thirds_all = [(gname, standings[2][0].name, standings[2][1])
+        for gname, standings in group_standings_by_name.items()
+        if len(standings) > 2]
+    thirds_sorted = sorted(thirds_all, key=lambda x: (x[2]['points'], x[2]['goal_diff'], x[2]['goals_scored']), reverse=True)
+    qualified_thirds_ranked = tuple((gname, name) for gname, name, _ in thirds_sorted[:8])
     return {
         'exit_stages': exit_stage,
         'group_match_pairs': group_match_pairs,
@@ -361,6 +363,7 @@ def simulate_tournament_once(original_elos, countries_by_name, groups, knockout_
         'knockout_match_details': knockout_match_details,
         'group_standings': group_standings_snapshot,
         'group_match_details': group_match_details,
+        'qualified_thirds_ranked': qualified_thirds_ranked,
     }
 
 def select_qualified_thirds(groups, n=8):

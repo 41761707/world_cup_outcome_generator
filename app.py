@@ -198,6 +198,127 @@ CARD_CSS_RESULT = """
 </style>
 """
 
+CARD_CSS_PROBABLE = """
+<style>
+.match-card-probable {
+    border: 1px solid #74c0fc;
+    border-radius: 10px;
+    padding: 10px 12px;
+    background: #e7f5ff;
+    margin-bottom: 6px;
+    font-size: 0.82rem;
+    color: #212529 !important;
+}
+.match-card-probable .mid {
+    font-size: 0.68rem;
+    color: #1971c2 !important;
+    margin-bottom: 6px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.match-card-probable .pct {
+    font-weight: 400;
+    color: #868e96 !important;
+    font-size: 0.65rem;
+    text-transform: none;
+}
+.match-card-probable .team {
+    padding: 4px 0;
+    border-bottom: 1px solid #a5d8ff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #212529 !important;
+}
+.match-card-probable .team:last-child { border-bottom: none; }
+.match-card-probable .team.winner { font-weight: 700; color: #1864ab !important; }
+.match-card-probable .score { float: right; font-weight: 600; color: #495057 !important; margin-left: 6px; }
+</style>
+"""
+
+def _match_card_probable(mid: str, team1: str, team2: str, winner: str, pair_pct: float, winner_pct: float) -> str:
+    cls1 = "winner" if winner == team1 else ""
+    cls2 = "winner" if winner == team2 else ""
+    score1 = f"{winner_pct:.1f}%" if winner == team1 else "—"
+    score2 = f"{winner_pct:.1f}%" if winner == team2 else "—"
+    return f"""
+<div class="match-card-probable">
+  <div class="mid">{mid} <span class="pct">para: {pair_pct:.1f}%</span></div>
+  <div class="team {cls1}"><span class="score">{score1}</span>{team1}</div>
+  <div class="team {cls2}"><span class="score">{score2}</span>{team2}</div>
+</div>"""
+
+def display_probable_groups(stats: dict):
+    n = stats["n_simulations"]
+    group_standings_counts = stats["group_standings_counts"]
+    group_names = sorted(group_standings_counts.keys())
+    cols_per_row = 3
+    for i in range(0, len(group_names), cols_per_row):
+        batch = group_names[i : i + cols_per_row]
+        cols = st.columns(len(batch))
+        for col, gname in zip(cols, batch):
+            with col:
+                counts = group_standings_counts[gname]
+                best_order, best_count = max(counts.items(), key=lambda x: x[1])
+                pct = 100 * best_count / n
+                st.markdown(f"**Grupa {gname}** <span style='color:#868e96;font-size:0.8rem'>({pct:.1f}% symulacji)</span>", unsafe_allow_html=True)
+                rows = [{"#": idx + 1, "Drużyna": name} for idx, name in enumerate(best_order)]
+                st.dataframe(pd.DataFrame(rows).set_index("#"), use_container_width=True)
+        st.write("")
+    # Najczęściej awansujące drużyny z 3. miejsc
+    qualified_thirds_team_counts = stats.get("qualified_thirds_team_counts", {})
+    if qualified_thirds_team_counts:
+        st.markdown("**Najczęściej awansujące drużyny z 3. miejsca (TOP 8)**")
+        top8 = sorted(qualified_thirds_team_counts.items(), key=lambda x: -x[1])[:8]
+        rows = [
+            {"#": idx + 1, "Drużyna": name, "Procent": f"{100 * count / n:.1f}%"}
+            for idx, (name, count) in enumerate(top8)
+        ]
+        st.dataframe(pd.DataFrame(rows).set_index("#"), use_container_width=True)
+
+def display_probable_bracket(stats: dict):
+    st.markdown(CARD_CSS_PROBABLE, unsafe_allow_html=True)
+    n = stats["n_simulations"]
+    match_slot_pairs = stats["match_slot_pairs"]
+    match_slot_winners = stats["match_slot_winners"]
+    by_round: dict[str, list] = defaultdict(list)
+    for mid, pair_counts in match_slot_pairs.items():
+        best_pair, pair_count = max(pair_counts.items(), key=lambda x: x[1])
+        t1, t2 = best_pair
+        pair_pct = 100 * pair_count / n
+        winner_counts = match_slot_winners.get(mid, {})
+        wins_t1 = winner_counts.get(t1, 0)
+        wins_t2 = winner_counts.get(t2, 0)
+        best_winner = t1 if wins_t1 >= wins_t2 else t2
+        winner_pct = 100 * max(wins_t1, wins_t2) / n
+        if mid.startswith("R_32"):
+            rnd = "R_32"
+        elif mid.startswith("R_16"):
+            rnd = "R_16"
+        elif mid.startswith("QF"):
+            rnd = "QF"
+        elif mid.startswith("SF"):
+            rnd = "SF"
+        elif mid == "3RD":
+            rnd = "3RD"
+        elif mid == "F":
+            rnd = "F"
+        else:
+            continue
+        by_round[rnd].append((mid, t1, t2, best_winner, pair_pct, winner_pct))
+    for rnd in ROUND_ORDER:
+        if rnd not in by_round:
+            continue
+        st.markdown(f"#### {ROUND_LABELS[rnd]}")
+        matches = sorted(by_round[rnd], key=lambda x: x[0])
+        cols_per_row = min(4, len(matches))
+        for i in range(0, len(matches), cols_per_row):
+            batch = matches[i : i + cols_per_row]
+            cols = st.columns(len(batch))
+            for col, (mid, t1, t2, winner, pair_pct, winner_pct) in zip(cols, batch):
+                col.markdown(_match_card_probable(mid, t1, t2, winner, pair_pct, winner_pct), unsafe_allow_html=True)
+
 def _match_card_result(mid: str, m: dict) -> str:
     pen = " <small style='color:#888'>(k.)</small>" if m["penalties"] else ""
     score_str = f"{m['score1']}–{m['score2']}"
@@ -469,6 +590,23 @@ def display_results(stats: dict):
             margin=dict(b=40, t=20),
         )
         st.plotly_chart(fig_cumul, use_container_width=True)
+        # Najczęstsi rywale w fazie pucharowej per etap
+        st.markdown("**Najczęstsi rywale w fazie pucharowej**")
+        ko_counts = stats["knockout_meeting_counts"]
+        opponents_by_stage: dict[str, list] = defaultdict(list)
+        for (pair, stage), count in ko_counts.items():
+            if selected in pair:
+                opponent = list(pair - {selected})[0]
+                opponents_by_stage[stage].append({"Rywal": opponent, "Spotkań": count, "Procent": f"{100 * count / n:.1f}%"})
+        if any(opponents_by_stage.values()):
+            for stage in ["R_32", "R_16", "QF", "SF", "3RD", "F"]:
+                if stage not in opponents_by_stage:
+                    continue
+                rows = sorted(opponents_by_stage[stage], key=lambda x: -x["Spotkań"])[:10]
+                st.caption(ROUND_LABELS[stage])
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        else:
+            st.caption("Brak danych — drużyna nie dotarła do fazy pucharowej w żadnej symulacji.")
 
 st.set_page_config(
     page_title="Symulator MŚ",
@@ -494,7 +632,7 @@ if "horizontal_charts" not in st.session_state:
         """,
         height=0,
     )
-    st.session_state["horizontal_charts"] = False  # fallback: pionowe (desktop)
+    st.session_state["horizontal_charts"] = False
 
 # Pasek boczny
 with st.sidebar:
@@ -516,7 +654,7 @@ with st.sidebar:
             value=0.25,
             step=0.01,
             format="%.2f",
-            help="Jak mocno różnica ELO skaluje oczekiwane gole",
+            help="Jak mocno różnica ELO skaluje oczekiwane gole (Dobierac eksperymentalnie, typowo 0.1–0.3)",
         )
         n_simulations = st.number_input(
             "Liczba symulacji",
@@ -559,12 +697,11 @@ if run_btn:
     st.success(f"✅ Ukończono {int(n_simulations):,} symulacji!")
 
 # Zakładki
-tab_groups, tab_bracket, tab_results, tab_info = st.tabs(
-    ["📋 Grupy", "🗂️ Drabinka", "📊 Wyniki symulacji", "ℹ️ Opis działania"]
+tab_groups, tab_bracket, tab_probable, tab_results, tab_info = st.tabs(
+    ["📋 Grupy", "🗂️ Drabinka", "🎯 Najbardziej prawdopodobna drabinka", "📊 Wyniki symulacji", "ℹ️ Opis działania"]
 )
 
 with tab_groups:
-    # --- Checkbox: użyj wyników z pliku ---
     n_presets = len(schedule_presets)
     if n_presets:
         use_presets = st.checkbox(
@@ -576,7 +713,6 @@ with tab_groups:
     else:
         use_presets = False
 
-    # --- Expander: własne wyniki meczów grupowych ---
     with st.expander("✏️ Wprowadź własne wyniki meczów grupowych (opcjonalnie)", expanded=False):
         st.caption(
             "Wypełnij wyniki dla wybranych meczów — zostaną one użyte we wszystkich symulacjach jako stały wynik. "
@@ -621,6 +757,36 @@ with tab_groups:
         st.subheader("Wyniki fazy grupowej — ostatnie losowanie")
         st.caption("Tabela końcowa z ostatniej przeprowadzonej symulacji (Pkt = punkty, RB = różnica bramek, G = bramki strzelone).")
         display_groups(groups_data, last_standings=_lb["groups"])
+        # Tabela 3. miejsc — ostatnie losowanie
+        lb_groups = _lb["groups"]
+        thirds_last = [
+            (gname, standings[2][0], standings[2][1])
+            for gname, standings in lb_groups.items()
+            if len(standings) > 2
+        ]
+        thirds_last_sorted = sorted(thirds_last, key=lambda x: (x[2]["points"], x[2]["goal_diff"], x[2]["goals_scored"]), reverse=True)
+        st.markdown("---")
+        st.markdown("**Tabela 3. miejsc — ostatnie losowanie**")
+        st.caption("Zielone wiersze = drużyny awansowane do fazy pucharowej (8 najlepszych 3. miejsc).")
+        thirds_rows = [
+            {
+                "#": idx + 1,
+                "Grupa": gname,
+                "Drużyna": name,
+                "Pkt": stats["points"],
+                "RB": stats["goal_diff"],
+                "G": stats["goals_scored"],
+                "_qualified": idx < 8,
+            }
+            for idx, (gname, name, stats) in enumerate(thirds_last_sorted)
+        ]
+        thirds_df = pd.DataFrame(thirds_rows).set_index("#")
+        qualified_mask = thirds_df.pop("_qualified")
+        styled_thirds = thirds_df.style.apply(
+            lambda _: ["background-color: #2d6a4f" if qualified_mask.iloc[i] else "" for i in range(len(thirds_df))],
+            axis=0,
+        )
+        st.dataframe(styled_thirds, use_container_width=True)
         # Wyniki poszczególnych meczów grupowych
         st.markdown("---")
         st.markdown("**Wyniki meczów — ostatnie losowanie**")
@@ -647,6 +813,21 @@ with tab_bracket:
         st.caption("Drabinka pokazuje zaplanowane mecze — drużyny zostaną wylosowane po fazie grupowej. "
                    "Po uruchomieniu symulacji zobaczysz tutaj wyniki ostatniego losowania.")
         display_empty_bracket(knockout_raw)
+
+with tab_probable:
+    st.subheader("Najbardziej prawdopodobna drabinka")
+    if "stats" in st.session_state and st.session_state["stats"].get("match_slot_pairs"):
+        st.info(
+            "🎯 Dla każdego meczu pokazana jest **najczęściej występująca para drużyn** oraz **najczęstszy zwycięzca** tego meczu. "
+            "Procent przy parze = jak często te dwie drużyny spotkały się w tym miejscu drabinki. "
+            "Procent przy zwycięzcy = jak często ta drużyna wygrała ten mecz (licząc wszystkie symulacje)."
+        )
+        st.subheader("Najbardziej prawdopodobne tabele grup")
+        display_probable_groups(st.session_state["stats"])
+        st.subheader("Najbardziej prawdopodobna drabinka pucharowa")
+        display_probable_bracket(st.session_state["stats"])
+    else:
+        st.info("Uruchom symulację, aby zobaczyć najbardziej prawdopodobną drabinkę.")
 
 with tab_info:
     st.subheader("Jak działa symulator?")
