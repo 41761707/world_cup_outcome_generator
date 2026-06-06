@@ -223,7 +223,7 @@ def load_schedule(schedule_file, countries_by_name):
             pair_str = pair_str.strip()
             # Odetnij opcjonalny wynik na końcu (np. "2-1")
             parts = pair_str.rsplit(None, 1)
-            if len(parts) == 2 and _is_score(parts[1]):
+            if len(parts) == 2 and is_score(parts[1]):
                 pair_str = parts[0].strip()
             home, away = [n.strip() for n in pair_str.split(' - ', 1)]
             pair = (countries_by_name[home], countries_by_name[away])
@@ -231,7 +231,7 @@ def load_schedule(schedule_file, countries_by_name):
     return schedules
 
 
-def _is_score(s):
+def is_score(s):
     parts = s.split('-')
     if len(parts) != 2:
         return False
@@ -253,7 +253,7 @@ def load_schedule_presets(schedule_file):
             _, pair_str = line.split(':', 1)
             pair_str = pair_str.strip()
             parts = pair_str.rsplit(None, 1)
-            if len(parts) == 2 and _is_score(parts[1]):
+            if len(parts) == 2 and is_score(parts[1]):
                 s1, s2 = parts[1].split('-')
                 home, away = [n.strip() for n in parts[0].split(' - ', 1)]
                 presets[(home, away)] = (int(s1), int(s2))

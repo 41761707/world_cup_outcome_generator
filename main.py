@@ -21,6 +21,7 @@ def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n
     team_exit_stages = defaultdict(list)
     group_meeting_counts = defaultdict(int)
     knockout_meeting_counts = defaultdict(int)
+    knockout_meeting_wins = defaultdict(lambda: defaultdict(int))
     match_slot_pairs = defaultdict(lambda: defaultdict(int))
     match_slot_winners = defaultdict(lambda: defaultdict(int))
     group_standings_counts = defaultdict(lambda: defaultdict(int))
@@ -39,6 +40,9 @@ def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n
             group_meeting_counts[frozenset({t1, t2})] += 1
         for t1, t2, stage in result["knockout_match_pairs"]:
             knockout_meeting_counts[(frozenset({t1, t2}), stage)] += 1
+        for detail in result["knockout_match_details"]:
+            key = (frozenset({detail["team1"], detail["team2"]}), detail["stage"])
+            knockout_meeting_wins[key][detail["winner"]] += 1
         for detail in result["knockout_match_details"]:
             mid = detail["match_id"]
             pair = (detail["team1"], detail["team2"])
@@ -59,6 +63,7 @@ def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n
         "team_exit_stages": dict(team_exit_stages),
         "group_meeting_counts": dict(group_meeting_counts),
         "knockout_meeting_counts": dict(knockout_meeting_counts),
+        "knockout_meeting_wins": {k: dict(v) for k, v in knockout_meeting_wins.items()},
         "match_slot_pairs": {mid: dict(counts) for mid, counts in match_slot_pairs.items()},
         "match_slot_winners": {mid: dict(counts) for mid, counts in match_slot_winners.items()},
         "group_standings_counts": {gname: dict(counts) for gname, counts in group_standings_counts.items()},

@@ -593,18 +593,77 @@ def display_results(stats: dict):
         # Najczęstsi rywale w fazie pucharowej per etap
         st.markdown("**Najczęstsi rywale w fazie pucharowej**")
         ko_counts = stats["knockout_meeting_counts"]
+        ko_wins = stats.get("knockout_meeting_wins", {})
         opponents_by_stage: dict[str, list] = defaultdict(list)
         for (pair, stage), count in ko_counts.items():
             if selected in pair:
-                opponent = list(pair - {selected})[0]
-                opponents_by_stage[stage].append({"Rywal": opponent, "Spotkań": count, "Procent": f"{100 * count / n:.1f}%"})
+                remainder = list(pair - {selected})
+                if not remainder:
+                    continue
+                opponent = remainder[0]
+                wins = ko_wins.get((pair, stage), {}).get(selected, 0)
+                losses = count - wins
+                opponents_by_stage[stage].append({
+                    "Rywal": opponent,
+                    "Spotkań": count,
+                    "Wygrane": wins,
+                    "Przegrane": losses,
+                })
         if any(opponents_by_stage.values()):
+            st.markdown("""
+<style>
+.opp-table { width:100%; border-collapse:collapse; font-size:0.82rem; margin-bottom:8px; }
+.opp-table th { text-align:left; padding:5px 8px; color:#868e96; font-weight:600;
+                border-bottom:2px solid #343a40; font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em; }
+.opp-table td { padding:5px 8px; border-bottom:1px solid #2c2f33; vertical-align:middle; }
+.opp-table tr:last-child td { border-bottom:none; }
+.opp-name { font-weight:500; }
+.opp-pct  { color:#868e96; font-size:0.75rem; }
+.bar-wrap { background:#2c2f33; border-radius:4px; height:8px; width:120px; overflow:hidden; display:flex; }
+.bar-win  { background:#2f9e44; height:8px; }
+.bar-loss { background:#e03131; height:8px; }
+.wl-nums  { font-size:0.75rem; white-space:nowrap; }
+.wl-w { color:#2f9e44; font-weight:600; }
+.wl-l { color:#e03131; font-weight:600; }
+</style>
+""", unsafe_allow_html=True)
             for stage in ["R_32", "R_16", "QF", "SF", "3RD", "F"]:
                 if stage not in opponents_by_stage:
                     continue
                 rows = sorted(opponents_by_stage[stage], key=lambda x: -x["Spotkań"])[:10]
-                st.caption(ROUND_LABELS[stage])
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                st.markdown(f"<div style='color:#868e96;font-size:0.75rem;font-weight:600;text-transform:uppercase;"
+                            f"letter-spacing:.04em;margin:10px 0 4px'>{ROUND_LABELS[stage]}</div>",
+                            unsafe_allow_html=True)
+                html = '<table class="opp-table"><tr><th>Rywal</th><th>Spotk.</th><th style="min-width:140px">W / P</th><th>Wynik</th><th>% wygranych</th></tr>'
+                for r in rows:
+                    total = r["Spotkań"]
+                    w_pct = r["Wygrane"] / total if total else 0
+                    l_pct = r["Przegrane"] / total if total else 0
+                    meet_pct = 100 * total / n
+                    win_pct = 100 * w_pct
+                    bar = (f'<div class="bar-wrap">'
+                           f'<div class="bar-win" style="width:{w_pct*100:.1f}%"></div>'
+                           f'<div class="bar-loss" style="width:{l_pct*100:.1f}%"></div>'
+                           f'</div>')
+                    wl = (f'<span class="wl-w">{r["Wygrane"]}W</span>'
+                          f' <span style="color:#495057">·</span> '
+                          f'<span class="wl-l">{r["Przegrane"]}P</span>')
+                    win_pct_color = ""
+                    if win_pct > 50:
+                        win_pct_color = "#2f9e44"
+                    elif win_pct < 50:
+                        win_pct_color = "#e03131"
+                    else:
+                        win_pct_color =  "#f59f00"
+                    html += (f'<tr>'
+                             f'<td><span class="opp-name">{r["Rywal"]}</span></td>'
+                             f'<td><span class="opp-pct">{meet_pct:.1f}%</span></td>'
+                             f'<td>{bar}</td>'
+                             f'<td class="wl-nums">{wl}</td>'
+                             f'<td style="font-weight:700;color:{win_pct_color}">{win_pct:.1f}%</td>'
+                             f'</tr>')
+                html += '</table>'
+                st.markdown(html, unsafe_allow_html=True)
         else:
             st.caption("Brak danych — drużyna nie dotarła do fazy pucharowej w żadnej symulacji.")
 
