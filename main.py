@@ -7,7 +7,7 @@ from wc_logic import (
 #TODO: Stałe do konfiga
 STAGES_ORDER = ["Grupa", "R_32", "R_16", "QF", "SF", "3RD", "F", "Zwycięzca"]
 
-def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n=1000, lambda_base=1.3, k=0.25):
+def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n=1000, lambda_base=1.3, k=0.25, fixed_group_results=None):
     countries = get_countries(countries_file)
     countries_by_name = {c.name: c for c in countries}
     original_elos = {c.name: c.elo for c in countries}
@@ -26,7 +26,8 @@ def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n
         if (i + 1) % 100 == 0:
             print(f"Symulacja {i + 1}/{n}...")
         result = simulate_tournament_once(
-            original_elos, countries_by_name, groups, knockout_raw, lambda_base, k
+            original_elos, countries_by_name, groups, knockout_raw, lambda_base, k,
+            fixed_group_results=fixed_group_results
         )
         for country, stage in result["exit_stages"].items():
             team_exit_stages[country].append(stage)

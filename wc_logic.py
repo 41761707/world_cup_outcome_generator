@@ -35,11 +35,19 @@ class Group:
         self.schedule = schedule
         self.standings = []
 
-    def simulate_group_stage(self, lambda_base, k):
+    def simulate_group_stage(self, lambda_base, k, fixed_results=None):
         matches = []
         for country1, country2 in self.schedule:
             match = Match(country1, country2)
-            match.simulate_match(lambda_base, k)
+            key = (country1.name, country2.name)
+            key_rev = (country2.name, country1.name)
+            if fixed_results and key in fixed_results:
+                match.set_fixed_result(*fixed_results[key])
+            elif fixed_results and key_rev in fixed_results:
+                s1, s2 = fixed_results[key_rev]
+                match.set_fixed_result(s2, s1)
+            else:
+                match.simulate_match(lambda_base, k)
             matches.append(match)
         return matches
     
@@ -74,6 +82,24 @@ class Match:
         self.elo_after1 = 0
         self.elo_after2 = 0
     
+    def set_fixed_result(self, score1, score2):
+        self.score1 = score1
+        self.score2 = score2
+        goal_diff = abs(score1 - score2)
+        if score1 > score2:
+            self.outcome = "1"
+            self.country1.recalc_elo(self.country2.elo, "win", goal_diff)
+            self.country2.recalc_elo(self.country1.elo, "loss", goal_diff)
+        elif score2 > score1:
+            self.outcome = "2"
+            self.country1.recalc_elo(self.country2.elo, "loss", goal_diff)
+            self.country2.recalc_elo(self.country1.elo, "win", goal_diff)
+        else:
+            self.outcome = "X"
+            self.country1.recalc_elo(self.country2.elo, "draw", goal_diff)
+            self.country2.recalc_elo(self.country1.elo, "draw", goal_diff)
+        print(self)
+
     def simulate_match(self, lambda_base, k):
         diff = (self.country1.elo - self.country2.elo) / 400.0
         self.lambda1 = lambda_base * np.exp(diff * k * np.log(10))
@@ -238,7 +264,7 @@ def match_id_to_stage(match_id):
         return 'SF'
     return match_id  # '3RD', 'F'
 
-def simulate_tournament_once(original_elos, countries_by_name, groups, knockout_raw, lambda_base, k):
+def simulate_tournament_once(original_elos, countries_by_name, groups, knockout_raw, lambda_base, k, fixed_group_results=None):
     """Rozgrywa jeden turniej. Zwraca słownik z wynikami."""
     for name, elo in original_elos.items():
         countries_by_name[name].elo = elo
@@ -248,7 +274,7 @@ def simulate_tournament_once(original_elos, countries_by_name, groups, knockout_
     group_match_pairs = []
     group_match_details: dict = {}
     for group in groups:
-        matches = group.simulate_group_stage(lambda_base, k)
+        matches = group.simulate_group_stage(lambda_base, k, fixed_results=fixed_group_results)
         standings = group.calculate_standings(matches)
         group_standings_by_name[group.name] = standings
         for m in matches:

@@ -51,8 +51,17 @@ def load_initial_data():
             group_name, rest = line.split(":", 1)
             names = [n.strip() for n in rest.split(",")]
             groups_data[group_name] = [(n, elo_map.get(n, 0)) for n in names]
+    group_schedule: dict[str, list[tuple[str, str]]] = {}
+    with open(SCHEDULE_GROUPS_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            group_name, pair_str = line.split(":", 1)
+            home, away = [n.strip() for n in pair_str.split(" - ", 1)]
+            group_schedule.setdefault(group_name.strip(), []).append((home, away))
     knockout_raw = load_knockout_schedule(SCHEDULE_KNOCKOUT_FILE)
-    return groups_data, knockout_raw
+    return groups_data, group_schedule, knockout_raw
 
 def _fmt_slot(slot) -> str:
     kind = slot[0]
@@ -356,7 +365,7 @@ def display_results(stats: dict):
     st.dataframe(pd.DataFrame(ko_rows), use_container_width=True, hide_index=True)
     # 5. Szczegóły wybranej drużyny
     st.subheader("🔍 Szczegóły wybranej drużyny")
-    selected = st.selectbox("Wybierz drużynę:", sorted(team_exit.keys()))
+    selected = st.selectbox("Wybierz drużynę:", sorted(team_exit.keys()), key="team_detail_select")
     if selected:
         stages = team_exit[selected]
         detail_df = pd.DataFrame(
@@ -408,7 +417,7 @@ st.set_page_config(
 )
 st.title("⚽ Symulator Mistrzostw Świata")
 st.caption("Analiza Monte Carlo — rozkłady prawdopodobieństwa wyników wszystkich drużyn")
-groups_data, knockout_raw = load_initial_data()
+groups_data, group_schedule, knockout_raw = load_initial_data()
 # Pasek boczny
 with st.sidebar:
     st.header("⚙️ Parametry symulacji")
@@ -454,6 +463,7 @@ if run_btn:
                 n=int(n_simulations),
                 lambda_base=float(lambda_base),
                 k=float(k),
+                fixed_group_results=st.session_state.get("fixed_group_results"),
             )
         st.session_state["stats"] = _stats
         st.session_state["sim_params"] = {
@@ -469,6 +479,35 @@ tab_groups, tab_bracket, tab_results, tab_info = st.tabs(
 )
 
 with tab_groups:
+    # --- Expander: własne wyniki meczów grupowych ---
+    with st.expander("✏️ Wprowadź własne wyniki meczów grupowych (opcjonalnie)", expanded=False):
+        st.caption(
+            "Wypełnij wyniki dla wybranych meczów — zostaną one użyte we wszystkich symulacjach jako stały wynik. "
+            "Pozostawienie pól pustych oznacza, że mecz zostanie rozegrany losowo."
+        )
+        fixed_inputs: dict[tuple[str, str], tuple[int, int]] = {}
+        for gname in sorted(group_schedule.keys()):
+            st.markdown(f"**Grupa {gname}**")
+            for home, away in group_schedule[gname]:
+                col_home, col_s1, col_dash, col_s2, col_away = st.columns([3, 1, 0.3, 1, 3])
+                col_home.markdown(f"<div style='padding-top:6px;text-align:right'>{home}</div>", unsafe_allow_html=True)
+                s1 = col_s1.number_input(
+                    "g1", min_value=0, max_value=30, value=None,
+                    key=f"fg_{gname}_{home}_{away}_1", label_visibility="collapsed"
+                )
+                col_dash.markdown("<div style='padding-top:6px;text-align:center'>–</div>", unsafe_allow_html=True)
+                s2 = col_s2.number_input(
+                    "g2", min_value=0, max_value=30, value=None,
+                    key=f"fg_{gname}_{home}_{away}_2", label_visibility="collapsed"
+                )
+                col_away.markdown(f"<div style='padding-top:6px'>{away}</div>", unsafe_allow_html=True)
+                if s1 is not None and s2 is not None:
+                    fixed_inputs[(home, away)] = (int(s1), int(s2))
+        st.session_state["fixed_group_results"] = fixed_inputs if fixed_inputs else None
+        n_fixed = len(fixed_inputs)
+        if n_fixed:
+            st.success(f"Zablokowano {n_fixed} {'mecz' if n_fixed == 1 else 'mecze' if n_fixed in (2, 3, 4) else 'meczów'}.")
+
     _lb = st.session_state.get("stats", {}).get("last_bracket")
     if _lb:
         st.subheader("Wyniki fazy grupowej — ostatnie losowanie")
@@ -539,7 +578,7 @@ with tab_info:
     st.markdown("### 2️⃣ Symulacja wyniku meczu")
     st.markdown(
         """
-        Wynik meczu nie jest z góry ustalony — jest **losowany**. Symulatoral oblicza, ile goli
+        Wynik meczu nie jest z góry ustalony — jest **losowany**. Symulator oblicza, ile goli
         *statystycznie spodziewamy się* po każdej drużynie, a następnie losuje rzeczywisty wynik.
 
         #### Jak to działa krok po kroku?
