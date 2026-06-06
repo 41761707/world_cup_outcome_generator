@@ -437,6 +437,38 @@ def display_results(stats: dict):
             )
             fig_detail.update_layout(showlegend=True)
             st.plotly_chart(fig_detail, use_container_width=True)
+        # Wykres przyrostowy — szansa na dotarcie do etapu lub dalej
+        st.markdown("**Szansa na dotarcie do etapu (lub dalej)**")
+        cumulative_data = [
+            ("1/16 finału",  ("R_32", "R_16", "QF", "SF", "3RD", "F", "Zwycięzca")),
+            ("1/8 finału",   ("R_16", "QF", "SF", "3RD", "F", "Zwycięzca")),
+            ("Ćwierćfinał",  ("QF", "SF", "3RD", "F", "Zwycięzca")),
+            ("Półfinał",     ("SF", "3RD", "F", "Zwycięzca")),
+            ("Finał",        ("F", "Zwycięzca")),
+            ("Zwycięzca",    ("Zwycięzca",)),
+        ]
+        cumul_df = pd.DataFrame([
+            {"Etap": label, "Procent": round(100 * sum(1 for s in stages if s in stage_set) / n, 2)}
+            for label, stage_set in cumulative_data
+        ])
+        fig_cumul = px.bar(
+            cumul_df,
+            x="Etap",
+            y="Procent",
+            color="Procent",
+            color_continuous_scale="Blues",
+            text="Procent",
+            labels={"Procent": "Prawdopodobieństwo (%)"},
+        )
+        fig_cumul.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+        fig_cumul.update_layout(
+            coloraxis_showscale=False,
+            yaxis_title="Prawdopodobieństwo (%)",
+            yaxis_range=[0, 110],
+            xaxis_title=None,
+            margin=dict(b=40, t=20),
+        )
+        st.plotly_chart(fig_cumul, use_container_width=True)
 
 st.set_page_config(
     page_title="Symulator MŚ",

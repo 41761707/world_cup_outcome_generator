@@ -213,7 +213,8 @@ def load_schedule(schedule_file, countries_by_name):
     with open(schedule_file, 'r', encoding='utf-8') as f:
         for line in f:
             #A: Brazil - Argentina
-            #A: Brazil - Argentina 2-1   (opcjonalny wynik)
+            # or
+            #A: Brazil - Argentina 2-1
             line = line.strip()
             if not line:
                 continue
@@ -231,7 +232,6 @@ def load_schedule(schedule_file, countries_by_name):
 
 
 def _is_score(s):
-    """Sprawdza czy string ma format X-Y (liczby całkowite)."""
     parts = s.split('-')
     if len(parts) != 2:
         return False
@@ -244,7 +244,6 @@ def _is_score(s):
 
 
 def load_schedule_presets(schedule_file):
-    """Zwraca dict {(home, away): (score1, score2)} dla meczów z wpisanym wynikiem w pliku harmonogramu."""
     presets = {}
     with open(schedule_file, 'r', encoding='utf-8') as f:
         for line in f:
@@ -301,7 +300,6 @@ def match_id_to_stage(match_id):
     return match_id  # '3RD', 'F'
 
 def simulate_tournament_once(original_elos, countries_by_name, groups, knockout_raw, lambda_base, k, fixed_group_results=None):
-    """Rozgrywa jeden turniej. Zwraca słownik z wynikami."""
     for name, elo in original_elos.items():
         countries_by_name[name].elo = elo
     for group in groups:
