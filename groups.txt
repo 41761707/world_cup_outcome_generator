@@ -1,0 +1,12 @@
+A:Czechy,Meksyk,Republika Południowej Afryki,Korea Południowa
+B:Szwajcaria,Bośnia i Hercegowina,Kanada,Katar
+C:Szkocja,Brazylia,Haiti,Maroko
+D:Turcja,Paragwaj,USA,Australia
+E:Niemcy,Ekwador,Wybrzeże Kości Słoniowej, Curacao
+F:Szwecja,Holandia,Tunezja,Japonia
+G:Belgia,Egipt,Iran,Nowa Zelandia
+H:Hiszpania,Urugwaj,Republika Zielonego Przylądka, Arabia Saudyjska
+I:Francja,Norwegia,Senegal,Irak
+J:Austria,Argentyna,Algieria,Jordania
+K:Portugalia,Kolumbia,DR Konga,Uzbekistan
+L:Chorwacja,Anglia,Ghana,Panama

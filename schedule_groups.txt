@@ -1,0 +1,72 @@
+A: Meksyk - Republika Południowej Afryki
+A: Korea Południowa - Czechy
+A: Czechy - Republika Południowej Afryki
+A: Meksyk - Korea Południowa
+A: Czechy - Meksyk
+A: Republika Południowej Afryki - Korea Południowa
+B: Kanada - Bośnia i Hercegowina 
+B: Katar - Szwajcaria
+B: Szwajcaria - Bośnia i Hercegowina
+B: Kanada - Katar
+B: Szwajcaria - Kanada
+B: Bośnia i Hercegowina - Katar
+C: Brazylia - Maroko
+C: Haiti - Szkocja
+C: Szkocja - Maroko
+C: Brazylia - Haiti
+C: Szkocja - Brazylia
+C: Maroko - Haiti
+D: USA - Paragwaj
+D: Australia - Turcja
+D: USA - Australia
+D: Turcja - Paragwaj
+D: Turcja - USA
+D: Paragwaj - Australia
+E: Niemcy - Curacao
+E: Wybrzeże Kości Słoniowej - Ekwador
+E: Niemcy - Wybrzeże Kości Słoniowej
+E: Ekwador - Curacao
+E: Curacao - Wybrzeże Kości Słoniowej
+E: Ekwador - Niemcy
+F: Holandia - Japonia
+F: Szwecja - Tunezja
+F: Holandia - Szwecja
+F: Tunezja - Japonia
+F: Japonia - Szwecja
+F: Tunezja - Holandia
+G: Belgia - Egipt
+G: Iran - Nowa Zelandia
+G: Belgia - Iran
+G: Nowa Zelandia - Egipt
+G: Egipt - Iran
+G: Nowa Zelandia - Belgia
+H: Hiszpania - Republika Zielonego Przylądka
+H: Arabia Saudyjska - Urugwaj
+H: Hiszpania - Arabia Saudyjska
+H: Urugwaj - Republika Zielonego Przylądka
+H: Republika Zielonego Przylądka - Arabia Saudyjska
+H: Urugwaj - Hiszpania
+I: Francja - Senegal
+I: Irak - Norwegia
+I: Francja - Irak
+I: Norwegia - Senegal
+I: Norwegia - Francja
+I: Senegal - Irak
+J: Argentyna - Algieria
+J: Austria - Jordania
+J: Argentyna - Austria
+J: Jordania - Algieria
+J: Algieria - Austria
+J: Jordania - Argentyna
+K: Portugalia - DR Konga
+K: Uzbekistan - Kolumbia
+K: Portugalia - Uzbekistan
+K: Kolumbia - DR Konga
+K: Kolumbia - Portugalia
+K: DR Konga - Uzbekistan 
+L: Anglia - Chorwacja
+L: Ghana - Panama
+L: Anglia - Ghana
+L: Panama - Chorwacja
+L: Panama - Anglia
+L: Chorwacja - Ghana
