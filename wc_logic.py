@@ -154,6 +154,36 @@ class KnockoutMatch:
         self.winner = None
         self.loser = None
 
+    def set_fixed_result(self, score1, score2, penalties_winner=None):
+        """Ustaw z góry określony wynik meczu pucharowego.
+
+        penalties_winner: "slot1" jeśli wygrał country1, "slot2" jeśli country2
+                          (używane tylko gdy score1 == score2).
+        """
+        self.score1 = score1
+        self.score2 = score2
+        goal_diff = abs(score1 - score2)
+        if score1 > score2:
+            self.winner = self.country1
+            self.loser = self.country2
+            self.country1.recalc_elo(self.country2.elo, "win", goal_diff)
+            self.country2.recalc_elo(self.country1.elo, "loss", goal_diff)
+        elif score2 > score1:
+            self.winner = self.country2
+            self.loser = self.country1
+            self.country2.recalc_elo(self.country1.elo, "win", goal_diff)
+            self.country1.recalc_elo(self.country2.elo, "loss", goal_diff)
+        else:
+            # Remis — wynik po karnych
+            if penalties_winner == "slot1":
+                self.winner = self.country1
+                self.loser = self.country2
+            else:
+                self.winner = self.country2
+                self.loser = self.country1
+            self.country1.recalc_elo(self.country2.elo, "draw", 0)
+            self.country2.recalc_elo(self.country1.elo, "draw", 0)
+
     def simulate(self, lambda_base, k):
         diff = (self.country1.elo - self.country2.elo) / 400.0
         lambda1 = lambda_base * np.exp(diff * k * np.log(10))
@@ -299,7 +329,7 @@ def match_id_to_stage(match_id):
         return 'SF'
     return match_id  # '3RD', 'F'
 
-def simulate_tournament_once(original_elos, countries_by_name, groups, knockout_raw, lambda_base, k, fixed_group_results=None):
+def simulate_tournament_once(original_elos, countries_by_name, groups, knockout_raw, lambda_base, k, fixed_group_results=None, fixed_knockout_results=None):
     for name, elo in original_elos.items():
         countries_by_name[name].elo = elo
     for group in groups:
@@ -322,15 +352,20 @@ def simulate_tournament_once(original_elos, countries_by_name, groups, knockout_
             } for m in matches]
     exit_stage = {name: 'Grupa' for name in countries_by_name}
     qualified_thirds = select_qualified_thirds(groups)
+    thirds_assignment = assign_thirds_to_slots(qualified_thirds, knockout_raw)
     knockout_matches = [KnockoutMatch(mid, s1, s2) for mid, s1, s2 in knockout_raw]
     knockout_match_pairs = []
     knockout_match_details = []
     match_results = {}
     for km in knockout_matches:
-        km.country1 = resolve_slot(km.slot1, group_standings_by_name, qualified_thirds, match_results)
-        km.country2 = resolve_slot(km.slot2, group_standings_by_name, qualified_thirds, match_results)
+        km.country1 = resolve_slot(km.slot1, group_standings_by_name, qualified_thirds, match_results, thirds_assignment)
+        km.country2 = resolve_slot(km.slot2, group_standings_by_name, qualified_thirds, match_results, thirds_assignment)
         stage = match_id_to_stage(km.match_id)
-        km.simulate(lambda_base, k)
+        if fixed_knockout_results and km.match_id in fixed_knockout_results:
+            s1, s2, pen = fixed_knockout_results[km.match_id]
+            km.set_fixed_result(s1, s2, pen)
+        else:
+            km.simulate(lambda_base, k)
         match_results[km.match_id] = km
         knockout_match_pairs.append((km.country1.name, km.country2.name, stage))
         knockout_match_details.append({
@@ -371,7 +406,43 @@ def select_qualified_thirds(groups, n=8):
     thirds_sorted = sorted(thirds, key=lambda x: (x[2]["points"], x[2]["goal_diff"], x[2]["goals_scored"]), reverse=True)
     return {group_name: country for group_name, country, _ in thirds_sorted[:n]}
 
-def resolve_slot(slot, group_standings_by_name, qualified_thirds, match_results):
+def assign_thirds_to_slots(qualified_thirds, knockout_raw):
+    """Bipartite matching: assigns each qualified third-place group to exactly one slot.
+
+    Returns dict: frozenset(candidate_groups) -> group_name
+    """
+    slot_sets = []
+    seen = set()
+    for _, s1, s2 in knockout_raw:
+        for slot in (s1, s2):
+            if slot[0] == 'group_pos' and len(slot[1]) > 1 and slot[2] == 3:
+                key = frozenset(slot[1])
+                if key not in seen:
+                    seen.add(key)
+                    slot_sets.append(key)
+
+    qualified_set = set(qualified_thirds.keys())
+    group_to_slots = {g: [i for i, s in enumerate(slot_sets) if g in s] for g in qualified_set}
+
+    match_slot = {}  # slot_idx -> group
+
+    def augment(group, visited):
+        for slot_idx in group_to_slots.get(group, []):
+            if slot_idx in visited:
+                continue
+            visited.add(slot_idx)
+            prev = match_slot.get(slot_idx)
+            if prev is None or augment(prev, visited):
+                match_slot[slot_idx] = group
+                return True
+        return False
+
+    for group in qualified_set:
+        augment(group, set())
+
+    return {slot_sets[i]: group for i, group in match_slot.items()}
+
+def resolve_slot(slot, group_standings_by_name, qualified_thirds, match_results, thirds_assignment=None):
     kind = slot[0]
     if kind == 'winner':
         return match_results[slot[1]].winner
@@ -380,7 +451,13 @@ def resolve_slot(slot, group_standings_by_name, qualified_thirds, match_results)
     _, groups, pos = slot
     if len(groups) == 1:
         return group_standings_by_name[groups[0]][pos - 1][0]
-    # Slot trzeciego miejsca — szukamy awansującej drużyny spośród podanych grup
+    # Slot trzeciego miejsca — używamy bipartytowego przypisania
+    if thirds_assignment is not None:
+        key = frozenset(groups)
+        group = thirds_assignment.get(key)
+        if group and group in qualified_thirds:
+            return qualified_thirds[group]
+    # Fallback (nie powinno być potrzebne)
     for g in groups:
         if g in qualified_thirds:
             return qualified_thirds[g]
@@ -388,10 +465,11 @@ def resolve_slot(slot, group_standings_by_name, qualified_thirds, match_results)
 
 def simulate_knockout_stage(knockout_raw, group_standings_by_name, qualified_thirds, lambda_base, k):
     match_results = {}
+    thirds_assignment = assign_thirds_to_slots(qualified_thirds, knockout_raw)
     for mid, s1, s2 in knockout_raw:
         km = KnockoutMatch(mid, s1, s2)
-        km.country1 = resolve_slot(km.slot1, group_standings_by_name, qualified_thirds, match_results)
-        km.country2 = resolve_slot(km.slot2, group_standings_by_name, qualified_thirds, match_results)
+        km.country1 = resolve_slot(km.slot1, group_standings_by_name, qualified_thirds, match_results, thirds_assignment)
+        km.country2 = resolve_slot(km.slot2, group_standings_by_name, qualified_thirds, match_results, thirds_assignment)
         km.simulate(lambda_base, k)
         match_results[km.match_id] = km
         print(f"[{km.match_id}] {km}")

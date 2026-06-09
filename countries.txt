@@ -2,47 +2,47 @@ Czechy:1740
 Meksyk:1875
 Republika Południowej Afryki:1518
 Korea Południowa:1758
-Szwajcaria:1894
-Bośnia i Hercegowina:1591
-Kanada:1793
-Katar:1423
-Szkocja:1770
-Brazylia:1988
-Haiti:1554
-Maroko:1824
-Turcja:1906
-Paragwaj:1832
-USA:1733
-Australia:1774
-Niemcy:1925
-Ekwador:1935
+Szwajcaria:1891
+Bośnia i Hercegowina:1595
+Kanada:1788
+Katar:1421
+Szkocja:1782
+Brazylia:1991
+Haiti:1548
+Maroko:1827
+Turcja:1911
+Paragwaj:1833
+USA:1726
+Australia:1777
+Niemcy:1932
+Ekwador:1938
 Wybrzeże Kości Słoniowej:1695
-Curacao:1433
+Curacao:1434
 Szwecja:1712
 Holandia:1944
-Tunezja:1633
+Tunezja:1628
 Japonia:1906
-Belgia:1888
+Belgia:1893
 Egipt:1699
 Iran:1772
-Nowa Zelandia:1563
+Nowa Zelandia:1562
 Hiszpania:2155
 Urugwaj:1892
-Republika Zielonego Przylądka:1576
-Arabia Saudyjska:1566
+Republika Zielonego Przylądka:1578
+Arabia Saudyjska:1569
 Francja:2062
-Norwegia:1917
+Norwegia:1914
 Senegal:1867
 Irak:1618
 Austria:1830
-Argentyna:2113
+Argentyna:2114
 Algieria:1760
-Jordania:1685
-Portugalia:1984
-Kolumbia:1977
+Jordania:1680
+Portugalia:1986
+Kolumbia:1982
 DR Konga:1661
 Uzbekistan:1718
-Chorwacja:1908
-Anglia:2020
+Chorwacja:1911
+Anglia:2021
 Ghana:1510
-Panama:1734
+Panama:1730

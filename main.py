@@ -7,7 +7,7 @@ from wc_logic import (
 #TODO: Stałe do konfiga
 STAGES_ORDER = ["Grupa", "R_32", "R_16", "QF", "SF", "3RD", "F", "Zwycięzca"]
 
-def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n=1000, lambda_base=1.3, k=0.25, fixed_group_results=None):
+def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n=1000, lambda_base=1.3, k=0.25, fixed_group_results=None, fixed_knockout_results=None):
     countries = get_countries(countries_file)
     countries_by_name = {c.name: c for c in countries}
     original_elos = {c.name: c.elo for c in countries}
@@ -24,6 +24,7 @@ def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n
     knockout_meeting_wins = defaultdict(lambda: defaultdict(int))
     match_slot_pairs = defaultdict(lambda: defaultdict(int))
     match_slot_winners = defaultdict(lambda: defaultdict(int))
+    match_slot_pair_winners = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
     group_standings_counts = defaultdict(lambda: defaultdict(int))
     qualified_thirds_counts = defaultdict(int)
     qualified_thirds_team_counts = defaultdict(int)
@@ -32,8 +33,10 @@ def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n
     for i in range(n):
         if (i + 1) % 100 == 0:
             print(f"Symulacja {i + 1}/{n}...")
-        result = simulate_tournament_once(original_elos, countries_by_name, 
-            groups, knockout_raw, lambda_base, k, fixed_group_results=fixed_group_results)
+        result = simulate_tournament_once(original_elos, countries_by_name,
+            groups, knockout_raw, lambda_base, k,
+            fixed_group_results=fixed_group_results,
+            fixed_knockout_results=fixed_knockout_results)
         for country, stage in result["exit_stages"].items():
             team_exit_stages[country].append(stage)
         for t1, t2 in result["group_match_pairs"]:
@@ -48,6 +51,7 @@ def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n
             pair = (detail["team1"], detail["team2"])
             match_slot_pairs[mid][pair] += 1
             match_slot_winners[mid][detail["winner"]] += 1
+            match_slot_pair_winners[mid][pair][detail["winner"]] += 1
         for gname, standings in result["group_standings"].items():
             order = tuple(name for name, _ in standings)
             group_standings_counts[gname][order] += 1
@@ -66,6 +70,7 @@ def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n
         "knockout_meeting_wins": {k: dict(v) for k, v in knockout_meeting_wins.items()},
         "match_slot_pairs": {mid: dict(counts) for mid, counts in match_slot_pairs.items()},
         "match_slot_winners": {mid: dict(counts) for mid, counts in match_slot_winners.items()},
+        "match_slot_pair_winners": {mid: {pair: dict(wins) for pair, wins in pair_wins.items()} for mid, pair_wins in match_slot_pair_winners.items()},
         "group_standings_counts": {gname: dict(counts) for gname, counts in group_standings_counts.items()},
         "qualified_thirds_counts": dict(qualified_thirds_counts),
         "qualified_thirds_team_counts": dict(qualified_thirds_team_counts),

@@ -11,7 +11,7 @@ import streamlit.components.v1 as components
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 from main import run_monte_carlo
-from wc_logic import get_countries, load_knockout_schedule, load_schedule_presets
+from wc_logic import get_countries, load_knockout_schedule, load_schedule_presets, assign_thirds_to_slots
 
 # TODO: stałe do konfiga
 COUNTRIES_FILE = os.path.join(BASE_DIR, "countries.txt")
@@ -92,6 +92,109 @@ def _group_by_round(knockout_raw):
         elif match_id == "F":
             rounds["F"].append((match_id, s1, s2))
     return rounds
+
+
+def _calc_group_standings(fixed_group_results, group_schedule, groups_data):
+    """Oblicza tabele grup dla wszystkich grup z kompletnymi wynikami."""
+    fr = fixed_group_results or {}
+    group_standings: dict = {}
+    for gname, matches in group_schedule.items():
+        if not all((h, a) in fr or (a, h) in fr for h, a in matches):
+            continue
+        teams = [name for name, _ in groups_data[gname]]
+        stats = {t: {"pts": 0, "gd": 0, "gs": 0} for t in teams}
+        for home, away in matches:
+            if (home, away) in fr:
+                s1, s2 = fr[(home, away)]
+            else:
+                s2, s1 = fr[(away, home)]
+            stats[home]["gd"] += s1 - s2
+            stats[away]["gd"] += s2 - s1
+            stats[home]["gs"] += s1
+            stats[away]["gs"] += s2
+            if s1 > s2:
+                stats[home]["pts"] += 3
+            elif s2 > s1:
+                stats[away]["pts"] += 3
+            else:
+                stats[home]["pts"] += 1
+                stats[away]["pts"] += 1
+        order = sorted(teams, key=lambda t: (stats[t]["pts"], stats[t]["gd"], stats[t]["gs"]), reverse=True)
+        group_standings[gname] = {"order": order, "stats": stats}
+    return group_standings
+
+
+def _calc_qualified_thirds(group_standings, groups_data):
+    """Oblicza 8 awansujących drużyn z 3. miejsc — tylko gdy wszystkie grupy są znane."""
+    if len(group_standings) != len(groups_data):
+        return {}
+    thirds = [
+        (gname, data["order"][2], data["stats"][data["order"][2]])
+        for gname, data in group_standings.items()
+        if len(data["order"]) >= 3
+    ]
+    thirds_sorted = sorted(thirds, key=lambda x: (x[2]["pts"], x[2]["gd"], x[2]["gs"]), reverse=True)
+    return {gname: team for gname, team, _ in thirds_sorted[:8]}
+
+
+def _compute_resolved_slots(fixed_group_results, group_schedule, groups_data, knockout_raw, ko_raw_values):
+    """Oblicza deterministycznie rozwiązane sloty na podstawie wyników grupowych i pucharowych.
+
+    ko_raw_values: dict[match_id → (s1, s2, pen_label)]
+        pen_label to nazwa drużyny lub "—" (wartość z selectboxa).
+    Zwraca (group_standings, qualified_thirds, ko_results).
+    ko_results: dict[match_id → (winner_name, loser_name)]
+    """
+    group_standings = _calc_group_standings(fixed_group_results, group_schedule, groups_data)
+    qualified_thirds = _calc_qualified_thirds(group_standings, groups_data)
+    thirds_assignment = assign_thirds_to_slots(qualified_thirds, knockout_raw) if qualified_thirds else {}
+
+    ko_results: dict = {}
+    for match_id, s1_slot, s2_slot in knockout_raw:
+        t1 = _resolve_single_slot_inner(s1_slot, group_standings, qualified_thirds, ko_results, thirds_assignment)
+        t2 = _resolve_single_slot_inner(s2_slot, group_standings, qualified_thirds, ko_results, thirds_assignment)
+        if t1 and t2 and match_id in ko_raw_values:
+            s1_score, s2_score, pen_label = ko_raw_values[match_id]
+            if s1_score > s2_score:
+                ko_results[match_id] = (t1, t2)
+            elif s2_score > s1_score:
+                ko_results[match_id] = (t2, t1)
+            else:
+                # Remis — pen_label to nazwa drużyny
+                if pen_label == t1:
+                    ko_results[match_id] = (t1, t2)
+                elif pen_label == t2:
+                    ko_results[match_id] = (t2, t1)
+    return group_standings, qualified_thirds, ko_results
+
+
+def _resolve_single_slot_inner(slot, group_standings, qualified_thirds, ko_results, thirds_assignment=None):
+    """Zwraca nazwę drużyny dla slotu, jeśli jest deterministycznie znana."""
+    kind = slot[0]
+    if kind == "winner":
+        r = ko_results.get(slot[1])
+        return r[0] if r else None
+    if kind == "loser":
+        r = ko_results.get(slot[1])
+        return r[1] if r else None
+    _, groups, pos = slot
+    if len(groups) == 1:
+        data = group_standings.get(groups[0])
+        if data and pos <= len(data["order"]):
+            return data["order"][pos - 1]
+        return None
+    # Slot 3. miejsca — używamy bipartytowego przypisania
+    if thirds_assignment:
+        key = frozenset(groups)
+        group = thirds_assignment.get(key)
+        if group and group in qualified_thirds:
+            return qualified_thirds[group]
+    # Fallback
+    for g in groups:
+        if g in qualified_thirds:
+            return qualified_thirds[g]
+    return None
+
 
 #TODO: CSS do osobnego pliku
 CARD_CSS = """
@@ -281,17 +384,17 @@ def display_probable_bracket(stats: dict):
     st.markdown(CARD_CSS_PROBABLE, unsafe_allow_html=True)
     n = stats["n_simulations"]
     match_slot_pairs = stats["match_slot_pairs"]
-    match_slot_winners = stats["match_slot_winners"]
+    match_slot_pair_winners = stats.get("match_slot_pair_winners", {})
     by_round: dict[str, list] = defaultdict(list)
     for mid, pair_counts in match_slot_pairs.items():
         best_pair, pair_count = max(pair_counts.items(), key=lambda x: x[1])
         t1, t2 = best_pair
         pair_pct = 100 * pair_count / n
-        winner_counts = match_slot_winners.get(mid, {})
-        wins_t1 = winner_counts.get(t1, 0)
-        wins_t2 = winner_counts.get(t2, 0)
+        pair_winner_counts = match_slot_pair_winners.get(mid, {}).get(best_pair, {})
+        wins_t1 = pair_winner_counts.get(t1, 0)
+        wins_t2 = pair_winner_counts.get(t2, 0)
         best_winner = t1 if wins_t1 >= wins_t2 else t2
-        winner_pct = 100 * max(wins_t1, wins_t2) / n
+        winner_pct = 100 * max(wins_t1, wins_t2) / pair_count if pair_count else 0
         if mid.startswith("R_32"):
             rnd = "R_32"
         elif mid.startswith("R_16"):
@@ -673,7 +776,7 @@ st.set_page_config(
     layout="wide",
 )
 st.title("⚽ Symulator Mistrzostw Świata")
-st.caption("Analiza Monte Carlo — rozkłady prawdopodobieństwa wyników wszystkich drużyn")
+st.caption("Analiza Monte Carlo — rozkłady prawdopodobieństwa wyników wszystkich drużyn. Wybierz parametry symulacji po lewej stronie i kliknij 'Uruchom symulację'.")
 groups_data, group_schedule, knockout_raw, schedule_presets = load_initial_data()
 
 # Wykrywanie szerokości ekranu przy pierwszym ładowaniu — ustawia domyślną orientację wykresów
@@ -745,7 +848,8 @@ if run_btn:
                 n=int(n_simulations),
                 lambda_base=float(lambda_base),
                 k=float(k),
-                fixed_group_results=st.session_state.get("fixed_group_results"),
+            fixed_group_results=st.session_state.get("fixed_group_results"),
+                fixed_knockout_results=st.session_state.get("fixed_knockout_results"),
             )
         st.session_state["stats"] = _stats
         st.session_state["sim_params"] = {
@@ -777,33 +881,43 @@ with tab_groups:
             "Wypełnij wyniki dla wybranych meczów — zostaną one użyte we wszystkich symulacjach jako stały wynik. "
             "Pozostawienie pól pustych oznacza, że mecz zostanie rozegrany losowo."
         )
-        fixed_inputs: dict[tuple[str, str], tuple[int, int]] = {}
-        # Klucz widgetów zależny od use_presets — wymusza reset wartości przy przełączeniu
-        preset_key_suffix = "on" if use_presets else "off"
-        with st.form("fixed_results_form"):
+        # Klucz widgetów zależny od use_presets + licznik czyszczeń — wymusza reset wartości
+        _grp_clear_count = st.session_state.get("grp_clear_count", 0)
+        preset_key_suffix = f"{'on' if use_presets else 'off'}_{_grp_clear_count}"
+
+        for gname in sorted(group_schedule.keys()):
+            st.markdown(f"**Grupa {gname}**")
+            for home, away in group_schedule[gname]:
+                preset = schedule_presets.get((home, away)) if use_presets else None
+                col_home, col_s1, col_dash, col_s2, col_away = st.columns([3, 1, 0.3, 1, 3])
+                col_home.markdown(f"<div style='padding-top:6px;text-align:right'>{home}</div>", unsafe_allow_html=True)
+                col_s1.number_input(
+                    "g1", min_value=0, max_value=30, value=preset[0] if preset is not None else None,
+                    key=f"fg_{gname}_{home}_{away}_1_{preset_key_suffix}", label_visibility="collapsed"
+                )
+                col_dash.markdown("<div style='padding-top:6px;text-align:center'>–</div>", unsafe_allow_html=True)
+                col_s2.number_input(
+                    "g2", min_value=0, max_value=30, value=preset[1] if preset is not None else None,
+                    key=f"fg_{gname}_{home}_{away}_2_{preset_key_suffix}", label_visibility="collapsed"
+                )
+                col_away.markdown(f"<div style='padding-top:6px'>{away}</div>", unsafe_allow_html=True)
+
+        col_apply_g, col_clear_g = st.columns(2)
+        if col_apply_g.button("✅ Zastosuj wyniki", use_container_width=True, key="apply_group_btn"):
+            fixed_inputs: dict[tuple[str, str], tuple[int, int]] = {}
             for gname in sorted(group_schedule.keys()):
-                st.markdown(f"**Grupa {gname}**")
                 for home, away in group_schedule[gname]:
-                    preset = schedule_presets.get((home, away)) if use_presets else None
-                    col_home, col_s1, col_dash, col_s2, col_away = st.columns([3, 1, 0.3, 1, 3])
-                    col_home.markdown(f"<div style='padding-top:6px;text-align:right'>{home}</div>", unsafe_allow_html=True)
-                    s1 = col_s1.number_input(
-                        "g1", min_value=0, max_value=30, value=preset[0] if preset is not None else None,
-                        key=f"fg_{gname}_{home}_{away}_1_{preset_key_suffix}", label_visibility="collapsed"
-                    )
-                    col_dash.markdown("<div style='padding-top:6px;text-align:center'>–</div>", unsafe_allow_html=True)
-                    s2 = col_s2.number_input(
-                        "g2", min_value=0, max_value=30, value=preset[1] if preset is not None else None,
-                        key=f"fg_{gname}_{home}_{away}_2_{preset_key_suffix}", label_visibility="collapsed"
-                    )
-                    col_away.markdown(f"<div style='padding-top:6px'>{away}</div>", unsafe_allow_html=True)
+                    s1 = st.session_state.get(f"fg_{gname}_{home}_{away}_1_{preset_key_suffix}")
+                    s2 = st.session_state.get(f"fg_{gname}_{home}_{away}_2_{preset_key_suffix}")
                     if s1 is not None and s2 is not None:
                         fixed_inputs[(home, away)] = (int(s1), int(s2))
-            apply_btn = st.form_submit_button("✅ Zastosuj wyniki", use_container_width=True)
-        if apply_btn:
             st.session_state["fixed_group_results"] = fixed_inputs if fixed_inputs else None
             n_fixed = len(fixed_inputs)
             st.success(f"Zablokowano {n_fixed} {'mecz' if n_fixed == 1 else 'mecze' if n_fixed in (2, 3, 4) else 'meczów'}." if n_fixed else "Wyniki wyczyszczone — wszystkie mecze będą losowane.")
+        elif col_clear_g.button("🗑️ Wyczyść wszystkie", use_container_width=True, key="clear_group_btn"):
+            st.session_state["fixed_group_results"] = None
+            st.session_state["grp_clear_count"] = _grp_clear_count + 1
+            st.success("Wszystkie wyniki grupowe zostały wyczyszczone.")
         elif "fixed_group_results" not in st.session_state:
             st.session_state["fixed_group_results"] = None
         _saved = st.session_state.get("fixed_group_results")
@@ -862,6 +976,116 @@ with tab_groups:
 
 with tab_bracket:
     st.subheader("Drabinka fazy pucharowej")
+
+    with st.expander("✏️ Wprowadź własne wyniki meczów pucharowych (opcjonalnie)", expanded=False):
+        st.caption(
+            "Wypełnij wyniki dla wybranych meczów pucharowych — zostaną one użyte we wszystkich symulacjach jako stały wynik. "
+            "Drużyny oznaczone są etykietami slotów (np. '1. Gr. A'), bo ich tożsamość zależy od wyników grupowych. "
+            "Przy remisie (po 90 min.) wskaż zwycięzcę po karnych."
+        )
+        rounds_ko = _group_by_round(knockout_raw)
+        _ko_clear_count = st.session_state.get("ko_clear_count", 0)
+
+        # Zbierz bieżące wartości widgetów z session_state (z poprzedniego rerunu)
+        _widget_ko_raw: dict[str, tuple[int, int, str]] = {}
+        for _rnd_matches in rounds_ko.values():
+            for _mid, _, _ in _rnd_matches:
+                _s1 = st.session_state.get(f"fko_{_mid}_1_{_ko_clear_count}")
+                _s2 = st.session_state.get(f"fko_{_mid}_2_{_ko_clear_count}")
+                _pen = st.session_state.get(f"fko_{_mid}_pen_{_ko_clear_count}", "—")
+                if _s1 is not None and _s2 is not None:
+                    _widget_ko_raw[_mid] = (int(_s1), int(_s2), _pen)
+
+        # Rozwiąż sloty kaskadowo na podstawie wyników grupowych + bieżących wartości widgetów
+        _gs_res, _qt_res, _ko_res = _compute_resolved_slots(
+            st.session_state.get("fixed_group_results"),
+            group_schedule, groups_data, knockout_raw,
+            _widget_ko_raw,
+        )
+
+        for rnd in ROUND_ORDER:
+            if rnd not in rounds_ko:
+                continue
+            st.markdown(f"**{ROUND_LABELS[rnd]}**")
+            for mid, s1_slot, s2_slot in sorted(rounds_ko[rnd], key=lambda x: x[0]):
+                label1 = _resolve_single_slot_inner(s1_slot, _gs_res, _qt_res, _ko_res) or _fmt_slot(s1_slot)
+                label2 = _resolve_single_slot_inner(s2_slot, _gs_res, _qt_res, _ko_res) or _fmt_slot(s2_slot)
+                col_t1, col_s1, col_dash, col_s2, col_t2, col_pen = st.columns([2.5, 1, 0.3, 1, 2.5, 2.5])
+                col_t1.markdown(
+                    f"<div style='padding-top:6px;text-align:right;font-size:0.85rem'>{label1}</div>",
+                    unsafe_allow_html=True,
+                )
+                col_s1.number_input(
+                    "g1", min_value=0, max_value=30, value=None,
+                    key=f"fko_{mid}_1_{_ko_clear_count}", label_visibility="collapsed",
+                )
+                col_dash.markdown(
+                    "<div style='padding-top:6px;text-align:center'>–</div>",
+                    unsafe_allow_html=True,
+                )
+                col_s2.number_input(
+                    "g2", min_value=0, max_value=30, value=None,
+                    key=f"fko_{mid}_2_{_ko_clear_count}", label_visibility="collapsed",
+                )
+                col_t2.markdown(
+                    f"<div style='padding-top:6px;font-size:0.85rem'>{label2}</div>",
+                    unsafe_allow_html=True,
+                )
+                col_pen.selectbox(
+                    "Karne (przy remisie)",
+                    options=["—", label1, label2],
+                    index=0,
+                    key=f"fko_{mid}_pen_{_ko_clear_count}",
+                    label_visibility="collapsed",
+                    help="Wskaż zwycięzcę po karnych — tylko gdy wynik po 90 min. jest remisem.",
+                )
+
+        col_apply_ko, col_clear_ko = st.columns(2)
+        if col_apply_ko.button("✅ Zastosuj wyniki pucharowe", use_container_width=True, key="apply_ko_btn"):
+            # Przelicz jeszcze raz z aktualnymi wartościami i zapisz w formacie slot1/slot2
+            _final_ko_raw: dict[str, tuple[int, int, str]] = {}
+            for _rnd_matches in rounds_ko.values():
+                for _mid, _, _ in _rnd_matches:
+                    _s1 = st.session_state.get(f"fko_{_mid}_1_{_ko_clear_count}")
+                    _s2 = st.session_state.get(f"fko_{_mid}_2_{_ko_clear_count}")
+                    _pen = st.session_state.get(f"fko_{_mid}_pen_{_ko_clear_count}", "—")
+                    if _s1 is not None and _s2 is not None:
+                        _final_ko_raw[_mid] = (int(_s1), int(_s2), _pen)
+            _gs_f, _qt_f, _ko_f = _compute_resolved_slots(
+                st.session_state.get("fixed_group_results"),
+                group_schedule, groups_data, knockout_raw,
+                _final_ko_raw,
+            )
+            fixed_ko_inputs: dict[str, tuple[int, int, str | None]] = {}
+            for _rnd_matches in rounds_ko.values():
+                for _mid, _sl1, _sl2 in _rnd_matches:
+                    if _mid not in _final_ko_raw:
+                        continue
+                    _s1, _s2, _pen_label = _final_ko_raw[_mid]
+                    if _s1 != _s2:
+                        fixed_ko_inputs[_mid] = (_s1, _s2, None)
+                    else:
+                        _t1 = _resolve_single_slot_inner(_sl1, _gs_f, _qt_f, _ko_f)
+                        _pen_winner = "slot1" if _pen_label == _t1 else ("slot2" if _pen_label != "—" else None)
+                        if _pen_winner is not None:
+                            fixed_ko_inputs[_mid] = (_s1, _s2, _pen_winner)
+            st.session_state["fixed_knockout_results"] = fixed_ko_inputs if fixed_ko_inputs else None
+            n_fixed_ko = len(fixed_ko_inputs)
+            st.success(
+                f"Zablokowano {n_fixed_ko} {'mecz' if n_fixed_ko == 1 else 'mecze' if n_fixed_ko in (2, 3, 4) else 'meczów'} pucharowych."
+                if n_fixed_ko else "Wyniki wyczyszczone — wszystkie mecze pucharowe będą losowane."
+            )
+        elif col_clear_ko.button("🗑️ Wyczyść wszystkie", use_container_width=True, key="clear_ko_btn"):
+            st.session_state["fixed_knockout_results"] = None
+            st.session_state["ko_clear_count"] = _ko_clear_count + 1
+            st.success("Wszystkie wyniki pucharowe zostały wyczyszczone.")
+        elif "fixed_knockout_results" not in st.session_state:
+            st.session_state["fixed_knockout_results"] = None
+        _saved_ko = st.session_state.get("fixed_knockout_results")
+        if _saved_ko:
+            n_saved_ko = len(_saved_ko)
+            st.info(f"Aktualnie zapisano: {n_saved_ko} {'mecz' if n_saved_ko == 1 else 'mecze' if n_saved_ko in (2, 3, 4) else 'meczów'} pucharowych.")
+
     if "stats" in st.session_state and st.session_state["stats"].get("last_bracket"):
         st.info(
             "📌 Poniżej pokazano wyniki **ostatniego losowania** (ostatniej z przeprowadzonych symulacji). "
