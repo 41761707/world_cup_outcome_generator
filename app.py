@@ -1,8 +1,14 @@
+"""Streamlit UI for World Cup Monte Carlo simulations."""
+
+from __future__ import annotations
+
+import contextlib
 import io
 import os
 import sys
-import contextlib
 from collections import defaultdict
+from typing import Any
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -11,8 +17,20 @@ import streamlit.components.v1 as components
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
+
+from bracket_viz import (
+    build_butterfly_bracket_html,
+    labels_from_knockout_raw,
+    probable_bracket_from_stats,
+    results_from_last_bracket,
+)
 from main import run_monte_carlo
-from wc_logic import get_countries, load_knockout_schedule, load_schedule_presets, assign_thirds_to_slots
+from wc_logic import (
+    assign_thirds_to_slots,
+    get_countries,
+    load_knockout_schedule,
+    load_schedule_presets,
+)
 
 # TODO: stałe do konfiga
 COUNTRIES_FILE = os.path.join(BASE_DIR, "countries.txt")
@@ -40,8 +58,15 @@ ROUND_LABELS = {
     "F": "Finał",
 }
 
+
 @st.cache_data
-def load_initial_data():
+def load_initial_data() -> tuple[
+    dict[str, list[tuple[str, int]]],
+    dict[str, list[tuple[str, str]]],
+    list[tuple[str, Any, Any]],
+    dict[tuple[str, str], tuple[int, int]],
+]:
+    """Load countries, groups, schedules and knockout fixture data."""
     countries = get_countries(COUNTRIES_FILE)
     elo_map = {c.name: c.elo for c in countries}
     groups_data: dict[str, list[tuple[str, int]]] = {}
@@ -66,7 +91,8 @@ def load_initial_data():
     schedule_presets = load_schedule_presets(SCHEDULE_GROUPS_FILE)
     return groups_data, group_schedule, knockout_raw, schedule_presets
 
-def _fmt_slot(slot) -> str:
+
+def _fmt_slot(slot: tuple) -> str:
     kind = slot[0]
     if kind == "winner":
         return f"Wyg. {slot[1]}"
@@ -77,7 +103,10 @@ def _fmt_slot(slot) -> str:
     label = f"Gr. {groups[0]}" if len(groups) == 1 else f"Gr. {'/'.join(groups)}"
     return f"{suffix} {label}"
 
-def _group_by_round(knockout_raw):
+
+def _group_by_round(
+    knockout_raw: list[tuple[str, Any, Any]],
+) -> dict[str, list[tuple[str, Any, Any]]]:
     rounds: dict[str, list] = defaultdict(list)
     for match_id, s1, s2 in knockout_raw:
         if match_id.startswith("R_32"):
@@ -95,8 +124,12 @@ def _group_by_round(knockout_raw):
     return rounds
 
 
-def _calc_group_standings(fixed_group_results, group_schedule, groups_data):
-    """Oblicza tabele grup dla wszystkich grup z kompletnymi wynikami."""
+def _calc_group_standings(
+    fixed_group_results: dict[tuple[str, str], tuple[int, int]] | None,
+    group_schedule: dict[str, list[tuple[str, str]]],
+    groups_data: dict[str, list[tuple[str, int]]],
+) -> dict[str, dict[str, Any]]:
+    """Compute group tables for groups with complete fixed results."""
     fr = fixed_group_results or {}
     group_standings: dict = {}
     for gname, matches in group_schedule.items():
@@ -125,8 +158,11 @@ def _calc_group_standings(fixed_group_results, group_schedule, groups_data):
     return group_standings
 
 
-def _calc_qualified_thirds(group_standings, groups_data):
-    """Oblicza 8 awansujących drużyn z 3. miejsc — tylko gdy wszystkie grupy są znane."""
+def _calc_qualified_thirds(
+    group_standings: dict[str, dict[str, Any]],
+    groups_data: dict[str, list[tuple[str, int]]],
+) -> dict[str, str]:
+    """Return top eight third-place teams when all groups are known."""
     if len(group_standings) != len(groups_data):
         return {}
     thirds = [
@@ -138,13 +174,17 @@ def _calc_qualified_thirds(group_standings, groups_data):
     return {gname: team for gname, team, _ in thirds_sorted[:8]}
 
 
-def _compute_resolved_slots(fixed_group_results, group_schedule, groups_data, knockout_raw, ko_raw_values):
-    """Oblicza deterministycznie rozwiązane sloty na podstawie wyników grupowych i pucharowych.
+def _compute_resolved_slots(
+    fixed_group_results: dict[tuple[str, str], tuple[int, int]] | None,
+    group_schedule: dict[str, list[tuple[str, str]]],
+    groups_data: dict[str, list[tuple[str, int]]],
+    knockout_raw: list[tuple[str, Any, Any]],
+    ko_raw_values: dict[str, tuple[int, int, str]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, str], dict[str, tuple[str, str]]]:
+    """Resolve bracket slots from group and knockout inputs.
 
-    ko_raw_values: dict[match_id → (s1, s2, pen_label)]
-        pen_label to nazwa drużyny lub "—" (wartość z selectboxa).
-    Zwraca (group_standings, qualified_thirds, ko_results).
-    ko_results: dict[match_id → (winner_name, loser_name)]
+    ko_raw_values maps match_id to (score1, score2, pen_label).
+    Returns (group_standings, qualified_thirds, ko_results).
     """
     group_standings = _calc_group_standings(fixed_group_results, group_schedule, groups_data)
     qualified_thirds = _calc_qualified_thirds(group_standings, groups_data)
@@ -169,8 +209,14 @@ def _compute_resolved_slots(fixed_group_results, group_schedule, groups_data, kn
     return group_standings, qualified_thirds, ko_results
 
 
-def _resolve_single_slot_inner(slot, group_standings, qualified_thirds, ko_results, thirds_assignment=None):
-    """Zwraca nazwę drużyny dla slotu, jeśli jest deterministycznie znana."""
+def _resolve_single_slot_inner(
+    slot: tuple,
+    group_standings: dict[str, dict[str, Any]],
+    qualified_thirds: dict[str, str],
+    ko_results: dict[str, tuple[str, str]],
+    thirds_assignment: dict[frozenset[str], str] | None = None,
+) -> str | None:
+    """Return team name for a slot when it is deterministically known."""
     kind = slot[0]
     if kind == "winner":
         r = ko_results.get(slot[1])
@@ -197,7 +243,7 @@ def _resolve_single_slot_inner(slot, group_standings, qualified_thirds, ko_resul
     return None
 
 
-#TODO: CSS do osobnego pliku
+# TODO: CSS do osobnego pliku
 CARD_CSS = """
 <style>
 .match-card {
@@ -229,6 +275,7 @@ CARD_CSS = """
 </style>
 """
 
+
 def _match_card(match_id: str, label1: str, label2: str) -> str:
     return f"""
 <div class="match-card">
@@ -237,7 +284,8 @@ def _match_card(match_id: str, label1: str, label2: str) -> str:
   <div class="team">▫ {label2}</div>
 </div>"""
 
-def display_groups(groups_data: dict, last_standings: dict | None = None):
+
+def display_groups(groups_data: dict, last_standings: dict | None = None) -> None:
     group_names = sorted(groups_data.keys())
     cols_per_row = 3
     for i in range(0, len(group_names), cols_per_row):
@@ -268,7 +316,7 @@ def display_groups(groups_data: dict, last_standings: dict | None = None):
                 st.dataframe(df, use_container_width=True)
         st.write("")
 
-#TODO: CSS do osobnego pliku
+# TODO: CSS do osobnego pliku
 CARD_CSS_RESULT = """
 <style>
 .match-card-result {
@@ -302,58 +350,7 @@ CARD_CSS_RESULT = """
 </style>
 """
 
-CARD_CSS_PROBABLE = """
-<style>
-.match-card-probable {
-    border: 1px solid #74c0fc;
-    border-radius: 10px;
-    padding: 10px 12px;
-    background: #e7f5ff;
-    margin-bottom: 6px;
-    font-size: 0.82rem;
-    color: #212529 !important;
-}
-.match-card-probable .mid {
-    font-size: 0.68rem;
-    color: #1971c2 !important;
-    margin-bottom: 6px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-.match-card-probable .pct {
-    font-weight: 400;
-    color: #868e96 !important;
-    font-size: 0.65rem;
-    text-transform: none;
-}
-.match-card-probable .team {
-    padding: 4px 0;
-    border-bottom: 1px solid #a5d8ff;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: #212529 !important;
-}
-.match-card-probable .team:last-child { border-bottom: none; }
-.match-card-probable .team.winner { font-weight: 700; color: #1864ab !important; }
-.match-card-probable .score { float: right; font-weight: 600; color: #495057 !important; margin-left: 6px; }
-</style>
-"""
-
-def _match_card_probable(mid: str, team1: str, team2: str, winner: str, pair_pct: float, winner_pct: float) -> str:
-    cls1 = "winner" if winner == team1 else ""
-    cls2 = "winner" if winner == team2 else ""
-    score1 = f"{winner_pct:.1f}%" if winner == team1 else "—"
-    score2 = f"{winner_pct:.1f}%" if winner == team2 else "—"
-    return f"""
-<div class="match-card-probable">
-  <div class="mid">{mid} <span class="pct">para: {pair_pct:.1f}%</span></div>
-  <div class="team {cls1}"><span class="score">{score1}</span>{team1}</div>
-  <div class="team {cls2}"><span class="score">{score2}</span>{team2}</div>
-</div>"""
-
-def display_probable_groups(stats: dict):
+def display_probable_groups(stats: dict) -> None:
     n = stats["n_simulations"]
     group_standings_counts = stats["group_standings_counts"]
     group_names = sorted(group_standings_counts.keys())
@@ -381,47 +378,13 @@ def display_probable_groups(stats: dict):
         ]
         st.dataframe(pd.DataFrame(rows).set_index("#"), use_container_width=True)
 
-def display_probable_bracket(stats: dict):
-    st.markdown(CARD_CSS_PROBABLE, unsafe_allow_html=True)
-    n = stats["n_simulations"]
-    match_slot_pairs = stats["match_slot_pairs"]
-    match_slot_pair_winners = stats.get("match_slot_pair_winners", {})
-    by_round: dict[str, list] = defaultdict(list)
-    for mid, pair_counts in match_slot_pairs.items():
-        best_pair, pair_count = max(pair_counts.items(), key=lambda x: x[1])
-        t1, t2 = best_pair
-        pair_pct = 100 * pair_count / n
-        pair_winner_counts = match_slot_pair_winners.get(mid, {}).get(best_pair, {})
-        wins_t1 = pair_winner_counts.get(t1, 0)
-        wins_t2 = pair_winner_counts.get(t2, 0)
-        best_winner = t1 if wins_t1 >= wins_t2 else t2
-        winner_pct = 100 * max(wins_t1, wins_t2) / pair_count if pair_count else 0
-        if mid.startswith("R_32"):
-            rnd = "R_32"
-        elif mid.startswith("R_16"):
-            rnd = "R_16"
-        elif mid.startswith("QF"):
-            rnd = "QF"
-        elif mid.startswith("SF"):
-            rnd = "SF"
-        elif mid == "3RD":
-            rnd = "3RD"
-        elif mid == "F":
-            rnd = "F"
-        else:
-            continue
-        by_round[rnd].append((mid, t1, t2, best_winner, pair_pct, winner_pct))
-    for rnd in ROUND_ORDER:
-        if rnd not in by_round:
-            continue
-        st.markdown(f"#### {ROUND_LABELS[rnd]}")
-        matches = sorted(by_round[rnd], key=lambda x: x[0])
-        cols_per_row = min(4, len(matches))
-        for i in range(0, len(matches), cols_per_row):
-            batch = matches[i : i + cols_per_row]
-            cols = st.columns(len(batch))
-            for col, (mid, t1, t2, winner, pair_pct, winner_pct) in zip(cols, batch):
-                col.markdown(_match_card_probable(mid, t1, t2, winner, pair_pct, winner_pct), unsafe_allow_html=True)
+
+def display_probable_bracket(stats: dict) -> None:
+    """Render most probable knockout bracket using butterfly layout."""
+    labels, results = probable_bracket_from_stats(stats)
+    html_content = build_butterfly_bracket_html(labels, results)
+    components.html(html_content, height=1180, scrolling=True)
+
 
 def _match_card_result(mid: str, m: dict) -> str:
     pen = " <small style='color:#888'>(k.)</small>" if m["penalties"] else ""
@@ -435,7 +398,8 @@ def _match_card_result(mid: str, m: dict) -> str:
   <div class="team {cls2}"><span class="score">{m['score2']}</span>{m['team2']}</div>
 </div>"""
 
-def display_empty_bracket(knockout_raw):
+
+def display_empty_bracket(knockout_raw: list[tuple[str, Any, Any]]) -> None:
     st.markdown(CARD_CSS, unsafe_allow_html=True)
     rounds = _group_by_round(knockout_raw)
     for rnd in ROUND_ORDER:
@@ -448,9 +412,13 @@ def display_empty_bracket(knockout_raw):
             batch = matches[i : i + cols_per_row]
             cols = st.columns(len(batch))
             for col, (mid, s1, s2) in zip(cols, batch):
-                col.markdown(_match_card(mid, _fmt_slot(s1), _fmt_slot(s2)), unsafe_allow_html=True)
+                col.markdown(
+                    _match_card(mid, _fmt_slot(s1), _fmt_slot(s2)),
+                    unsafe_allow_html=True,
+                )
 
-def display_last_bracket(last_bracket: dict):
+
+def display_last_bracket(last_bracket: dict) -> None:
     st.markdown(CARD_CSS_RESULT, unsafe_allow_html=True)
     by_round: dict[str, list] = defaultdict(list)
     for m in last_bracket["knockout"]:
@@ -465,7 +433,35 @@ def display_last_bracket(last_bracket: dict):
             batch = matches[i : i + cols_per_row]
             cols = st.columns(len(batch))
             for col, m in zip(cols, batch):
-                col.markdown(_match_card_result(m["match_id"], m), unsafe_allow_html=True)
+                col.markdown(
+                    _match_card_result(m["match_id"], m),
+                    unsafe_allow_html=True,
+                )
+
+
+def display_butterfly_bracket(
+    knockout_raw: list[tuple[str, Any, Any]],
+    last_bracket: dict | None = None,
+) -> None:
+    """Render center-converging butterfly bracket visualization."""
+    resolved_labels: dict[str, tuple[str, str]] = {}
+    if last_bracket:
+        for match in last_bracket["knockout"]:
+            resolved_labels[match["match_id"]] = (
+                match["team1"],
+                match["team2"],
+            )
+    labels = labels_from_knockout_raw(
+        knockout_raw, _fmt_slot, resolved_labels or None
+    )
+    results = (
+        results_from_last_bracket(last_bracket["knockout"])
+        if last_bracket
+        else None
+    )
+    html_content = build_butterfly_bracket_html(labels, results)
+    components.html(html_content, height=1180, scrolling=True)
+
 
 SCORE_HEATMAP_SCALE = [
     [0.0, "#1a1d29"],
@@ -489,11 +485,15 @@ def _score_outcome(s1: int, s2: int) -> str:
         return "Wygrana gościa"
     return "Remis"
 
-def plot_top_results_bar(counts: dict, home: str, away: str, n: int, top_n: int = 12):
-    """
-    Wykres słupkowy najczęstszych wyników (zamiast heatmapy).
-    Dla danych gdzie większość komórek macierzy jest pusta.
-    """
+
+def plot_top_results_bar(
+    counts: dict[tuple[int, int], int],
+    home: str,
+    away: str,
+    n: int,
+    top_n: int = 12,
+) -> go.Figure:
+    """Bar chart of the most frequent scores for a single fixture."""
     n_total = n if n > 0 else 1
     
     sorted_results = sorted(counts.items(), key=lambda x: x[1], reverse=True)
@@ -779,8 +779,10 @@ def display_team_info(stats: dict):
         st.caption("Brak danych — drużyna nie dotarła do fazy pucharowej w żadnej symulacji.")
 
 
-def display_group_score_distributions(stats: dict, group_schedule: dict):
-    """Wykresy rozkładu wyników dla meczów fazy grupowej."""
+def display_group_score_distributions(
+    stats: dict, group_schedule: dict
+) -> None:
+    """Show score distribution charts for group-stage matches."""
     score_counts = stats.get("group_match_score_counts")
     if not score_counts:
         return
@@ -1052,8 +1054,10 @@ if run_btn:
                 n=int(n_simulations),
                 lambda_base=float(lambda_base),
                 k=float(k),
-            fixed_group_results=st.session_state.get("fixed_group_results"),
-                fixed_knockout_results=st.session_state.get("fixed_knockout_results"),
+                fixed_group_results=st.session_state.get("fixed_group_results"),
+                fixed_knockout_results=st.session_state.get(
+                    "fixed_knockout_results"
+                ),
             )
         st.session_state["stats"] = _stats
         st.session_state["sim_params"] = {
@@ -1064,8 +1068,15 @@ if run_btn:
     st.success(f"✅ Ukończono {int(n_simulations):,} symulacji!")
 
 # Zakładki
-tab_groups, tab_bracket, tab_probable, tab_results, tab_team, tab_info = st.tabs(
-    ["📋 Grupy", "🗂️ Drabinka", "🎯 Najbardziej prawdopodobna drabinka", "📊 Wyniki symulacji", "👕 Szczegóły drużyn", "ℹ️ Opis działania"]
+tab_groups, tab_butterfly, tab_probable, tab_results, tab_team, tab_info = st.tabs(
+    [
+        "📋 Grupy",
+        "🏟️ Wizualizacja drabinki",
+        "🎯 Najbardziej prawdopodobna drabinka",
+        "📊 Wyniki symulacji",
+        "👕 Szczegóły drużyn",
+        "ℹ️ Opis działania",
+    ]
 )
 
 with tab_groups:
@@ -1176,138 +1187,33 @@ with tab_groups:
                     st.markdown(f"{t1_bold} {m['score1']} – {m['score2']} {t2_bold}")
     else:
         st.subheader("Podział na grupy")
-        display_groups(groups_data)
 
-with tab_bracket:
-    st.subheader("Drabinka fazy pucharowej")
 
-    with st.expander("✏️ Wprowadź własne wyniki meczów pucharowych (opcjonalnie)", expanded=False):
-        st.caption(
-            "Wypełnij wyniki dla wybranych meczów pucharowych — zostaną one użyte we wszystkich symulacjach jako stały wynik. "
-            "Drużyny oznaczone są etykietami slotów (np. '1. Gr. A'), bo ich tożsamość zależy od wyników grupowych. "
-            "Przy remisie (po 90 min.) wskaż zwycięzcę po karnych."
-        )
-        rounds_ko = _group_by_round(knockout_raw)
-        _ko_clear_count = st.session_state.get("ko_clear_count", 0)
-
-        # Zbierz bieżące wartości widgetów z session_state (z poprzedniego rerunu)
-        _widget_ko_raw: dict[str, tuple[int, int, str]] = {}
-        for _rnd_matches in rounds_ko.values():
-            for _mid, _, _ in _rnd_matches:
-                _s1 = st.session_state.get(f"fko_{_mid}_1_{_ko_clear_count}")
-                _s2 = st.session_state.get(f"fko_{_mid}_2_{_ko_clear_count}")
-                _pen = st.session_state.get(f"fko_{_mid}_pen_{_ko_clear_count}", "—")
-                if _s1 is not None and _s2 is not None:
-                    _widget_ko_raw[_mid] = (int(_s1), int(_s2), _pen)
-
-        # Rozwiąż sloty kaskadowo na podstawie wyników grupowych + bieżących wartości widgetów
-        _gs_res, _qt_res, _ko_res = _compute_resolved_slots(
-            st.session_state.get("fixed_group_results"),
-            group_schedule, groups_data, knockout_raw,
-            _widget_ko_raw,
-        )
-
-        for rnd in ROUND_ORDER:
-            if rnd not in rounds_ko:
-                continue
-            st.markdown(f"**{ROUND_LABELS[rnd]}**")
-            for mid, s1_slot, s2_slot in sorted(rounds_ko[rnd], key=lambda x: x[0]):
-                label1 = _resolve_single_slot_inner(s1_slot, _gs_res, _qt_res, _ko_res) or _fmt_slot(s1_slot)
-                label2 = _resolve_single_slot_inner(s2_slot, _gs_res, _qt_res, _ko_res) or _fmt_slot(s2_slot)
-                col_t1, col_s1, col_dash, col_s2, col_t2, col_pen = st.columns([2.5, 1, 0.3, 1, 2.5, 2.5])
-                col_t1.markdown(
-                    f"<div style='padding-top:6px;text-align:right;font-size:0.85rem'>{label1}</div>",
-                    unsafe_allow_html=True,
-                )
-                col_s1.number_input(
-                    "g1", min_value=0, max_value=30, value=None,
-                    key=f"fko_{mid}_1_{_ko_clear_count}", label_visibility="collapsed",
-                )
-                col_dash.markdown(
-                    "<div style='padding-top:6px;text-align:center'>–</div>",
-                    unsafe_allow_html=True,
-                )
-                col_s2.number_input(
-                    "g2", min_value=0, max_value=30, value=None,
-                    key=f"fko_{mid}_2_{_ko_clear_count}", label_visibility="collapsed",
-                )
-                col_t2.markdown(
-                    f"<div style='padding-top:6px;font-size:0.85rem'>{label2}</div>",
-                    unsafe_allow_html=True,
-                )
-                col_pen.selectbox(
-                    "Karne (przy remisie)",
-                    options=["—", label1, label2],
-                    index=0,
-                    key=f"fko_{mid}_pen_{_ko_clear_count}",
-                    label_visibility="collapsed",
-                    help="Wskaż zwycięzcę po karnych — tylko gdy wynik po 90 min. jest remisem.",
-                )
-
-        col_apply_ko, col_clear_ko = st.columns(2)
-        if col_apply_ko.button("✅ Zastosuj wyniki pucharowe", use_container_width=True, key="apply_ko_btn"):
-            # Przelicz jeszcze raz z aktualnymi wartościami i zapisz w formacie slot1/slot2
-            _final_ko_raw: dict[str, tuple[int, int, str]] = {}
-            for _rnd_matches in rounds_ko.values():
-                for _mid, _, _ in _rnd_matches:
-                    _s1 = st.session_state.get(f"fko_{_mid}_1_{_ko_clear_count}")
-                    _s2 = st.session_state.get(f"fko_{_mid}_2_{_ko_clear_count}")
-                    _pen = st.session_state.get(f"fko_{_mid}_pen_{_ko_clear_count}", "—")
-                    if _s1 is not None and _s2 is not None:
-                        _final_ko_raw[_mid] = (int(_s1), int(_s2), _pen)
-            _gs_f, _qt_f, _ko_f = _compute_resolved_slots(
-                st.session_state.get("fixed_group_results"),
-                group_schedule, groups_data, knockout_raw,
-                _final_ko_raw,
-            )
-            fixed_ko_inputs: dict[str, tuple[int, int, str | None]] = {}
-            for _rnd_matches in rounds_ko.values():
-                for _mid, _sl1, _sl2 in _rnd_matches:
-                    if _mid not in _final_ko_raw:
-                        continue
-                    _s1, _s2, _pen_label = _final_ko_raw[_mid]
-                    if _s1 != _s2:
-                        fixed_ko_inputs[_mid] = (_s1, _s2, None)
-                    else:
-                        _t1 = _resolve_single_slot_inner(_sl1, _gs_f, _qt_f, _ko_f)
-                        _pen_winner = "slot1" if _pen_label == _t1 else ("slot2" if _pen_label != "—" else None)
-                        if _pen_winner is not None:
-                            fixed_ko_inputs[_mid] = (_s1, _s2, _pen_winner)
-            st.session_state["fixed_knockout_results"] = fixed_ko_inputs if fixed_ko_inputs else None
-            n_fixed_ko = len(fixed_ko_inputs)
-            st.success(
-                f"Zablokowano {n_fixed_ko} {'mecz' if n_fixed_ko == 1 else 'mecze' if n_fixed_ko in (2, 3, 4) else 'meczów'} pucharowych."
-                if n_fixed_ko else "Wyniki wyczyszczone — wszystkie mecze pucharowe będą losowane."
-            )
-        elif col_clear_ko.button("🗑️ Wyczyść wszystkie", use_container_width=True, key="clear_ko_btn"):
-            st.session_state["fixed_knockout_results"] = None
-            st.session_state["ko_clear_count"] = _ko_clear_count + 1
-            st.success("Wszystkie wyniki pucharowe zostały wyczyszczone.")
-        elif "fixed_knockout_results" not in st.session_state:
-            st.session_state["fixed_knockout_results"] = None
-        _saved_ko = st.session_state.get("fixed_knockout_results")
-        if _saved_ko:
-            n_saved_ko = len(_saved_ko)
-            st.info(f"Aktualnie zapisano: {n_saved_ko} {'mecz' if n_saved_ko == 1 else 'mecze' if n_saved_ko in (2, 3, 4) else 'meczów'} pucharowych.")
-
-    if "stats" in st.session_state and st.session_state["stats"].get("last_bracket"):
+with tab_butterfly:
+    st.subheader("Wizualizacja drabinki")
+    st.caption(
+        "Drabinka w układzie „motylkowym”: finał w środku, górna połowa (mecze 1–8 "
+        "w 1/16) zbiega w dół, dolna połowa (mecze 9–16) zbiega do środka."
+    )
+    _lb_bfly = st.session_state.get("stats", {}).get("last_bracket")
+    if _lb_bfly:
         st.info(
-            "📌 Poniżej pokazano wyniki **ostatniego losowania** (ostatniej z przeprowadzonych symulacji). "
-            "Każde uruchomienie symulacji może dać inny wynik — to tylko jedna z możliwych wersji turnieju."
+            "Pokazano wyniki **ostatniego losowania** z symulacji."
         )
-        display_last_bracket(st.session_state["stats"]["last_bracket"])
     else:
-        st.caption("Drabinka pokazuje zaplanowane mecze — drużyny zostaną wylosowane po fazie grupowej. "
-                   "Po uruchomieniu symulacji zobaczysz tutaj wyniki ostatniego losowania.")
-        display_empty_bracket(knockout_raw)
+        st.info(
+            "Uruchom symulację, aby zobaczyć nazwy drużyn i wyniki. "
+            "Na razie widoczne są etykiety slotów (np. „1. Gr. A”)."
+        )
+    display_butterfly_bracket(knockout_raw, last_bracket=_lb_bfly)
 
 with tab_probable:
     st.subheader("Najbardziej prawdopodobna drabinka")
     if "stats" in st.session_state and st.session_state["stats"].get("match_slot_pairs"):
         st.info(
-            "🎯 Dla każdego meczu pokazana jest **najczęściej występująca para drużyn** oraz **najczęstszy zwycięzca** tego meczu. "
-            "Procent przy parze = jak często te dwie drużyny spotkały się w tym miejscu drabinki. "
-            "Procent przy zwycięzcy = jak często ta drużyna wygrała ten mecz (licząc wszystkie symulacje)."
+            "🎯 Drabinka pokazuje **najczęściej występującą parę drużyn** w każdym meczu "
+            "oraz **najczęstszego zwycięzcę** (procent przy nazwie drużyny). "
+            "„Najczęstsza para” = jak często te dwie drużyny spotkały się w tym miejscu drabinki."
         )
         st.subheader("Najbardziej prawdopodobne tabele grup")
         display_probable_groups(st.session_state["stats"])
