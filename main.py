@@ -28,6 +28,7 @@ def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n
     group_standings_counts = defaultdict(lambda: defaultdict(int))
     qualified_thirds_counts = defaultdict(int)
     qualified_thirds_team_counts = defaultdict(int)
+    group_match_score_counts = defaultdict(lambda: defaultdict(int))
     last_bracket = None
     #TODO: Wizualizacja w tqdm
     for i in range(n):
@@ -41,6 +42,10 @@ def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n
             team_exit_stages[country].append(stage)
         for t1, t2 in result["group_match_pairs"]:
             group_meeting_counts[frozenset({t1, t2})] += 1
+        for matches in result["group_match_details"].values():
+            for m in matches:
+                key = (m["team1"], m["team2"])
+                group_match_score_counts[key][(m["score1"], m["score2"])] += 1
         for t1, t2, stage in result["knockout_match_pairs"]:
             knockout_meeting_counts[(frozenset({t1, t2}), stage)] += 1
         for detail in result["knockout_match_details"]:
@@ -74,6 +79,7 @@ def run_monte_carlo(countries_file, groups_file, schedule_file, knockout_file, n
         "group_standings_counts": {gname: dict(counts) for gname, counts in group_standings_counts.items()},
         "qualified_thirds_counts": dict(qualified_thirds_counts),
         "qualified_thirds_team_counts": dict(qualified_thirds_team_counts),
+        "group_match_score_counts": {key: dict(scores) for key, scores in group_match_score_counts.items()},
         "n_simulations": n,
         "last_bracket": last_bracket,
     }

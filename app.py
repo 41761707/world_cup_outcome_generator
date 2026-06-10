@@ -5,6 +5,7 @@ import contextlib
 from collections import defaultdict
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -466,6 +467,360 @@ def display_last_bracket(last_bracket: dict):
             for col, m in zip(cols, batch):
                 col.markdown(_match_card_result(m["match_id"], m), unsafe_allow_html=True)
 
+SCORE_HEATMAP_SCALE = [
+    [0.0, "#1a1d29"],
+    [0.08, "#2d3a4f"],
+    [0.2, "#3d6b4f"],
+    [0.4, "#74c69d"],
+    [0.65, "#ffd166"],
+    [1.0, "#ef476f"],
+]
+SCORE_OUTCOME_COLORS = {
+    "Wygrana gospodarza": "#2f9e44",
+    "Remis": "#f59f00",
+    "Wygrana gościa": "#e03131",
+}
+
+
+def _score_outcome(s1: int, s2: int) -> str:
+    if s1 > s2:
+        return "Wygrana gospodarza"
+    if s1 < s2:
+        return "Wygrana gościa"
+    return "Remis"
+
+def plot_top_results_bar(counts: dict, home: str, away: str, n: int, top_n: int = 12):
+    """
+    Wykres słupkowy najczęstszych wyników (zamiast heatmapy).
+    Dla danych gdzie większość komórek macierzy jest pusta.
+    """
+    n_total = n if n > 0 else 1
+    
+    sorted_results = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+
+    # Weź top N wyników
+    top_results = sorted_results[:top_n]
+
+    # Przygotuj dane
+    labels = [f"{h}:{a}" for (h, a), _ in top_results]
+    percentages = [100 * count / n_total for _, count in top_results]
+
+    # Kolory dla wygranej gospodarza, remisu, gościa
+    colors = []
+    for (h, a), _ in top_results:
+        if h > a:
+            colors.append("#2ca02c")  # zielony - wygrana gospodarza
+        elif h < a:
+            colors.append("#de2d26")  # czerwony - wygrana gościa
+        else:
+            colors.append("#ffb800")  # żółty/piaskowy - remis
+
+    # Tworzenie słupków
+    fig = go.Figure(data=go.Bar(
+        x=labels,
+        y=percentages,
+        marker_color=colors,
+        text=[f"{p:.1f}%" for p in percentages],
+        textposition="outside",
+        textfont=dict(size=11, color="#333333"),
+        hovertemplate='<b>%{x}</b><br>Prawdopodobieństwo: <b>%{y:.1f}%</b><extra></extra>'
+    ))
+
+    # Dodanie legendy (ręcznie, bo plotly nie ogarnia automatycznie)
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None],
+        mode='markers',
+        marker=dict(size=10, color="#2ca02c"),
+        name='Wygrana gospodarza',
+        showlegend=True
+    ))
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None],
+        mode='markers',
+        marker=dict(size=10, color="#de2d26"),
+        name='Wygrana gościa',
+        showlegend=True
+    ))
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None],
+        mode='markers',
+        marker=dict(size=10, color="#ffb800"),
+        name='Remis',
+        showlegend=True
+    ))
+
+    # Ustawienie układu wykresu
+    fig.update_layout(
+        title=dict(
+            text=f"<b>{home} – {away}</b><br><sub>{n} unikalnych wyników • top {top_n}</sub>",
+            font=dict(size=14),
+            x=0.5
+        ),
+        xaxis=dict(
+            title="Wynik (gospodarz : gość)",
+            tickangle=-45,
+            tickfont=dict(size=11)
+        ),
+        yaxis=dict(
+            title="Prawdopodobieństwo (%)",
+            tickfont=dict(size=11),
+            gridcolor='rgba(0,0,0,0.1)',
+            zeroline=True,
+            zerolinecolor='#cccccc'
+        ),
+        height=500,
+        margin=dict(l=50, r=50, t=80, b=100),
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        legend=dict(
+            title="Typ wyniku",
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        )
+    )
+
+    return fig
+
+def _group_match_score_top_bars(counts: dict, n: int, top_n: int = 12):
+    """Poziomy wykres najczęstszych wyników."""
+    rows = [
+        {
+            "Wynik": f"{s1}:{s2}",
+            "Procent": round(100 * count / n, 2),
+            "Liczba": count,
+            "Typ": _score_outcome(s1, s2),
+        }
+        for (s1, s2), count in counts.items()
+    ]
+    df = pd.DataFrame(rows).sort_values("Procent", ascending=True).tail(top_n)
+    fig = px.bar(
+        df,
+        x="Procent",
+        y="Wynik",
+        orientation="h",
+        color="Typ",
+        color_discrete_map=SCORE_OUTCOME_COLORS,
+        text="Procent",
+        custom_data=["Liczba"],
+        labels={"Procent": "Prawdopodobieństwo (%)", "Wynik": "Wynik", "Typ": "Typ wyniku"},
+    )
+    fig.update_traces(
+        texttemplate="%{text:.1f}%",
+        textposition="outside",
+        hovertemplate="<b>%{y}</b><br>%{customdata[0]} razy (%{x:.1f}%)<extra></extra>",
+    )
+    fig.update_layout(
+        showlegend=True,
+        legend=dict(title="Typ wyniku", orientation="h", yanchor="bottom", y=1.02, x=0),
+        height=max(250, len(df) * 28),
+        margin=dict(l=0, r=40, t=30, b=20),
+        xaxis_title="Prawdopodobieństwo (%)",
+        yaxis_title=None,
+    )
+    return fig
+
+
+def display_team_info(stats: dict):
+    n = stats["n_simulations"]
+    team_exit = stats["team_exit_stages"]
+    st.subheader("👕 Szczegóły wybranej drużyny")
+    selected = st.selectbox("Wybierz drużynę:", sorted(team_exit.keys()), key="team_detail_select")
+    if not selected:
+        return
+    stages = team_exit[selected]
+    detail_df = pd.DataFrame(
+        [
+            {
+                "Etap": STAGES_LABELS[s],
+                "Liczba": stages.count(s),
+                "Procent": f"{100 * stages.count(s) / n:.1f}%",
+            }
+            for s in STAGES_ORDER
+            if stages.count(s) > 0
+        ]
+    )
+    col_a, col_b = st.columns([1, 1])
+    with col_a:
+        st.dataframe(detail_df, use_container_width=True, hide_index=True)
+    with col_b:
+        STAGE_COLORS = {
+            "Faza grupowa":  "#6c757d",
+            "1/16 finału":   "#4dabf7",
+            "1/8 finału":    "#339af0",
+            "Ćwierćfinał":   "#f59f00",
+            "Półfinał":      "#f76707",
+            "3. miejsce":    "#ae3ec9",
+            "Finał":         "#e03131",
+            "Zwycięzca":     "#2f9e44",
+        }
+        detail_df["_color"] = detail_df["Etap"].map(STAGE_COLORS)
+        fig_detail = px.pie(
+            detail_df,
+            names="Etap",
+            values="Liczba",
+            title=f"Rozkład etapów — {selected}",
+            color="Etap",
+            color_discrete_map=STAGE_COLORS,
+        )
+        fig_detail.update_traces(
+            textposition="inside",
+            textinfo="percent+label",
+            hovertemplate="<b>%{label}</b><br>%{value} symulacji (%{percent})<extra></extra>",
+        )
+        fig_detail.update_layout(showlegend=True)
+        st.plotly_chart(fig_detail, use_container_width=True)
+    st.markdown("**Szansa na dotarcie do etapu (lub dalej)**")
+    cumulative_data = [
+        ("1/16 finału",  ("R_32", "R_16", "QF", "SF", "3RD", "F", "Zwycięzca")),
+        ("1/8 finału",   ("R_16", "QF", "SF", "3RD", "F", "Zwycięzca")),
+        ("Ćwierćfinał",  ("QF", "SF", "3RD", "F", "Zwycięzca")),
+        ("Półfinał",     ("SF", "3RD", "F", "Zwycięzca")),
+        ("Finał",        ("F", "Zwycięzca")),
+        ("Zwycięzca",    ("Zwycięzca",)),
+    ]
+    cumul_df = pd.DataFrame([
+        {"Etap": label, "Procent": round(100 * sum(1 for s in stages if s in stage_set) / n, 2)}
+        for label, stage_set in cumulative_data
+    ])
+    fig_cumul = px.bar(
+        cumul_df,
+        x="Etap",
+        y="Procent",
+        color="Procent",
+        color_continuous_scale="YlGn",
+        text="Procent",
+        labels={"Procent": "Prawdopodobieństwo (%)"},
+    )
+    fig_cumul.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+    fig_cumul.update_layout(
+        coloraxis_showscale=False,
+        yaxis_title="Prawdopodobieństwo (%)",
+        yaxis_range=[0, 110],
+        xaxis_title=None,
+        margin=dict(b=40, t=20),
+    )
+    st.plotly_chart(fig_cumul, use_container_width=True)
+    st.markdown("**Najczęstsi rywale w fazie pucharowej**")
+    ko_counts = stats["knockout_meeting_counts"]
+    ko_wins = stats.get("knockout_meeting_wins", {})
+    opponents_by_stage: dict[str, list] = defaultdict(list)
+    for (pair, stage), count in ko_counts.items():
+        if selected in pair:
+            remainder = list(pair - {selected})
+            if not remainder:
+                continue
+            opponent = remainder[0]
+            wins = ko_wins.get((pair, stage), {}).get(selected, 0)
+            losses = count - wins
+            opponents_by_stage[stage].append({
+                "Rywal": opponent,
+                "Spotkań": count,
+                "Wygrane": wins,
+                "Przegrane": losses,
+            })
+    if any(opponents_by_stage.values()):
+        st.markdown("""
+<style>
+.opp-table { width:100%; border-collapse:collapse; font-size:0.82rem; margin-bottom:8px; }
+.opp-table th { text-align:left; padding:5px 8px; color:#868e96; font-weight:600;
+                border-bottom:2px solid #343a40; font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em; }
+.opp-table td { padding:5px 8px; border-bottom:1px solid #2c2f33; vertical-align:middle; }
+.opp-table tr:last-child td { border-bottom:none; }
+.opp-name { font-weight:500; }
+.opp-pct  { color:#868e96; font-size:0.75rem; }
+.bar-wrap { background:#2c2f33; border-radius:4px; height:8px; width:120px; overflow:hidden; display:flex; }
+.bar-win  { background:#2f9e44; height:8px; }
+.bar-loss { background:#e03131; height:8px; }
+.wl-nums  { font-size:0.75rem; white-space:nowrap; }
+.wl-w { color:#2f9e44; font-weight:600; }
+.wl-l { color:#e03131; font-weight:600; }
+</style>
+""", unsafe_allow_html=True)
+        for stage in ["R_32", "R_16", "QF", "SF", "3RD", "F"]:
+            if stage not in opponents_by_stage:
+                continue
+            rows = sorted(opponents_by_stage[stage], key=lambda x: -x["Spotkań"])[:10]
+            st.markdown(f"<div style='color:#868e96;font-size:0.75rem;font-weight:600;text-transform:uppercase;"
+                        f"letter-spacing:.04em;margin:10px 0 4px'>{ROUND_LABELS[stage]}</div>",
+                        unsafe_allow_html=True)
+            html = '<table class="opp-table"><tr><th>Rywal</th><th>Spotk.</th><th style="min-width:140px">W / P</th><th>Wynik</th><th>% wygranych</th></tr>'
+            for r in rows:
+                total = r["Spotkań"]
+                w_pct = r["Wygrane"] / total if total else 0
+                l_pct = r["Przegrane"] / total if total else 0
+                meet_pct = 100 * total / n
+                win_pct = 100 * w_pct
+                bar = (f'<div class="bar-wrap">'
+                       f'<div class="bar-win" style="width:{w_pct*100:.1f}%"></div>'
+                       f'<div class="bar-loss" style="width:{l_pct*100:.1f}%"></div>'
+                       f'</div>')
+                wl = (f'<span class="wl-w">{r["Wygrane"]}W</span>'
+                      f' <span style="color:#495057">·</span> '
+                      f'<span class="wl-l">{r["Przegrane"]}P</span>')
+                if win_pct > 50:
+                    win_pct_color = "#2f9e44"
+                elif win_pct < 50:
+                    win_pct_color = "#e03131"
+                else:
+                    win_pct_color = "#f59f00"
+                html += (f'<tr>'
+                         f'<td><span class="opp-name">{r["Rywal"]}</span></td>'
+                         f'<td><span class="opp-pct">{meet_pct:.1f}%</span></td>'
+                         f'<td>{bar}</td>'
+                         f'<td class="wl-nums">{wl}</td>'
+                         f'<td style="font-weight:700;color:{win_pct_color}">{win_pct:.1f}%</td>'
+                         f'</tr>')
+            html += '</table>'
+            st.markdown(html, unsafe_allow_html=True)
+    else:
+        st.caption("Brak danych — drużyna nie dotarła do fazy pucharowej w żadnej symulacji.")
+
+
+def display_group_score_distributions(stats: dict, group_schedule: dict):
+    """Wykresy rozkładu wyników dla meczów fazy grupowej."""
+    score_counts = stats.get("group_match_score_counts")
+    if not score_counts:
+        return
+    n = stats["n_simulations"]
+    st.subheader("📋 Rozkład wyników meczów grupowych")
+    for gname in sorted(group_schedule.keys()):
+        matches = group_schedule[gname]
+        options = [f"{home} – {away}" for home, away in matches]
+        with st.expander(f"Grupa {gname}", expanded=False):
+            selected = st.selectbox(
+                "Wybierz mecz",
+                options,
+                key=f"group_score_match_{gname}",
+            )
+            idx = options.index(selected)
+            home, away = matches[idx]
+            counts = score_counts.get((home, away), {})
+            if not counts:
+                st.info("Brak danych dla tego meczu.")
+                continue
+            unique_n = len(counts)
+            unique_label = (
+                "unikalny wynik" if unique_n == 1
+                else "unikalne wyniki" if unique_n in (2, 3, 4)
+                else "unikalnych wyników"
+            )
+            st.markdown(f"**{home} – {away}** · {unique_n} {unique_label}")
+            bars_fig = _group_match_score_top_bars(counts, n)
+            if st.session_state.get("horizontal_charts", False):
+                st.markdown("**Najczęstsze wyniki**")
+                st.plotly_chart(bars_fig, use_container_width=True)
+            else:
+                st.markdown(
+                    "<div style='font-size:0.8rem;color:#868e96;margin-bottom:4px'>"
+                    "Najczęstsze wyniki</div>",
+                    unsafe_allow_html=True,
+                )
+                st.plotly_chart(bars_fig, use_container_width=True)
+
+
 def display_results(stats: dict):
     n = stats["n_simulations"]
     team_exit = stats["team_exit_stages"]
@@ -598,7 +953,10 @@ def display_results(stats: dict):
             font=dict(size=12),
         )
         st.plotly_chart(fig_heat, use_container_width=True)
-    # 4. Najczęstsze spotkania w fazie pucharowej
+    # 4. Rozkład wyników meczów grupowych
+    display_group_score_distributions(stats, group_schedule)
+
+    # 5. Najczęstsze spotkania w fazie pucharowej
     st.subheader("⚔️ Najczęstsze spotkania w fazie pucharowej (top 20)")
     ko_rows = []
     for (pair, stage), count in sorted(
@@ -615,160 +973,6 @@ def display_results(stats: dict):
             }
         )
     st.dataframe(pd.DataFrame(ko_rows), use_container_width=True, hide_index=True)
-    # 5. Szczegóły wybranej drużyny
-    st.subheader("🔍 Szczegóły wybranej drużyny")
-    selected = st.selectbox("Wybierz drużynę:", sorted(team_exit.keys()), key="team_detail_select")
-    if selected:
-        stages = team_exit[selected]
-        detail_df = pd.DataFrame(
-            [
-                {
-                    "Etap": STAGES_LABELS[s],
-                    "Liczba": stages.count(s),
-                    "Procent": f"{100 * stages.count(s) / n:.1f}%",
-                }
-                for s in STAGES_ORDER
-                if stages.count(s) > 0
-            ]
-        )
-        col_a, col_b = st.columns([1, 1])
-        with col_a:
-            st.dataframe(detail_df, use_container_width=True, hide_index=True)
-        with col_b:
-            STAGE_COLORS = {
-                "Faza grupowa":  "#6c757d",
-                "1/16 finału":   "#4dabf7",
-                "1/8 finału":    "#339af0",
-                "Ćwierćfinał":   "#f59f00",
-                "Półfinał":      "#f76707",
-                "3. miejsce":    "#ae3ec9",
-                "Finał":         "#e03131",
-                "Zwycięzca":     "#2f9e44",
-            }
-            detail_df["_color"] = detail_df["Etap"].map(STAGE_COLORS)
-            fig_detail = px.pie(
-                detail_df,
-                names="Etap",
-                values="Liczba",
-                title=f"Rozkład etapów — {selected}",
-                color="Etap",
-                color_discrete_map=STAGE_COLORS,
-            )
-            fig_detail.update_traces(
-                textposition="inside",
-                textinfo="percent+label",
-                hovertemplate="<b>%{label}</b><br>%{value} symulacji (%{percent})<extra></extra>",
-            )
-            fig_detail.update_layout(showlegend=True)
-            st.plotly_chart(fig_detail, use_container_width=True)
-        # Wykres przyrostowy — szansa na dotarcie do etapu lub dalej
-        st.markdown("**Szansa na dotarcie do etapu (lub dalej)**")
-        cumulative_data = [
-            ("1/16 finału",  ("R_32", "R_16", "QF", "SF", "3RD", "F", "Zwycięzca")),
-            ("1/8 finału",   ("R_16", "QF", "SF", "3RD", "F", "Zwycięzca")),
-            ("Ćwierćfinał",  ("QF", "SF", "3RD", "F", "Zwycięzca")),
-            ("Półfinał",     ("SF", "3RD", "F", "Zwycięzca")),
-            ("Finał",        ("F", "Zwycięzca")),
-            ("Zwycięzca",    ("Zwycięzca",)),
-        ]
-        cumul_df = pd.DataFrame([
-            {"Etap": label, "Procent": round(100 * sum(1 for s in stages if s in stage_set) / n, 2)}
-            for label, stage_set in cumulative_data
-        ])
-        fig_cumul = px.bar(
-            cumul_df,
-            x="Etap",
-            y="Procent",
-            color="Procent",
-            color_continuous_scale="Blues",
-            text="Procent",
-            labels={"Procent": "Prawdopodobieństwo (%)"},
-        )
-        fig_cumul.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-        fig_cumul.update_layout(
-            coloraxis_showscale=False,
-            yaxis_title="Prawdopodobieństwo (%)",
-            yaxis_range=[0, 110],
-            xaxis_title=None,
-            margin=dict(b=40, t=20),
-        )
-        st.plotly_chart(fig_cumul, use_container_width=True)
-        # Najczęstsi rywale w fazie pucharowej per etap
-        st.markdown("**Najczęstsi rywale w fazie pucharowej**")
-        ko_counts = stats["knockout_meeting_counts"]
-        ko_wins = stats.get("knockout_meeting_wins", {})
-        opponents_by_stage: dict[str, list] = defaultdict(list)
-        for (pair, stage), count in ko_counts.items():
-            if selected in pair:
-                remainder = list(pair - {selected})
-                if not remainder:
-                    continue
-                opponent = remainder[0]
-                wins = ko_wins.get((pair, stage), {}).get(selected, 0)
-                losses = count - wins
-                opponents_by_stage[stage].append({
-                    "Rywal": opponent,
-                    "Spotkań": count,
-                    "Wygrane": wins,
-                    "Przegrane": losses,
-                })
-        if any(opponents_by_stage.values()):
-            st.markdown("""
-<style>
-.opp-table { width:100%; border-collapse:collapse; font-size:0.82rem; margin-bottom:8px; }
-.opp-table th { text-align:left; padding:5px 8px; color:#868e96; font-weight:600;
-                border-bottom:2px solid #343a40; font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em; }
-.opp-table td { padding:5px 8px; border-bottom:1px solid #2c2f33; vertical-align:middle; }
-.opp-table tr:last-child td { border-bottom:none; }
-.opp-name { font-weight:500; }
-.opp-pct  { color:#868e96; font-size:0.75rem; }
-.bar-wrap { background:#2c2f33; border-radius:4px; height:8px; width:120px; overflow:hidden; display:flex; }
-.bar-win  { background:#2f9e44; height:8px; }
-.bar-loss { background:#e03131; height:8px; }
-.wl-nums  { font-size:0.75rem; white-space:nowrap; }
-.wl-w { color:#2f9e44; font-weight:600; }
-.wl-l { color:#e03131; font-weight:600; }
-</style>
-""", unsafe_allow_html=True)
-            for stage in ["R_32", "R_16", "QF", "SF", "3RD", "F"]:
-                if stage not in opponents_by_stage:
-                    continue
-                rows = sorted(opponents_by_stage[stage], key=lambda x: -x["Spotkań"])[:10]
-                st.markdown(f"<div style='color:#868e96;font-size:0.75rem;font-weight:600;text-transform:uppercase;"
-                            f"letter-spacing:.04em;margin:10px 0 4px'>{ROUND_LABELS[stage]}</div>",
-                            unsafe_allow_html=True)
-                html = '<table class="opp-table"><tr><th>Rywal</th><th>Spotk.</th><th style="min-width:140px">W / P</th><th>Wynik</th><th>% wygranych</th></tr>'
-                for r in rows:
-                    total = r["Spotkań"]
-                    w_pct = r["Wygrane"] / total if total else 0
-                    l_pct = r["Przegrane"] / total if total else 0
-                    meet_pct = 100 * total / n
-                    win_pct = 100 * w_pct
-                    bar = (f'<div class="bar-wrap">'
-                           f'<div class="bar-win" style="width:{w_pct*100:.1f}%"></div>'
-                           f'<div class="bar-loss" style="width:{l_pct*100:.1f}%"></div>'
-                           f'</div>')
-                    wl = (f'<span class="wl-w">{r["Wygrane"]}W</span>'
-                          f' <span style="color:#495057">·</span> '
-                          f'<span class="wl-l">{r["Przegrane"]}P</span>')
-                    win_pct_color = ""
-                    if win_pct > 50:
-                        win_pct_color = "#2f9e44"
-                    elif win_pct < 50:
-                        win_pct_color = "#e03131"
-                    else:
-                        win_pct_color =  "#f59f00"
-                    html += (f'<tr>'
-                             f'<td><span class="opp-name">{r["Rywal"]}</span></td>'
-                             f'<td><span class="opp-pct">{meet_pct:.1f}%</span></td>'
-                             f'<td>{bar}</td>'
-                             f'<td class="wl-nums">{wl}</td>'
-                             f'<td style="font-weight:700;color:{win_pct_color}">{win_pct:.1f}%</td>'
-                             f'</tr>')
-                html += '</table>'
-                st.markdown(html, unsafe_allow_html=True)
-        else:
-            st.caption("Brak danych — drużyna nie dotarła do fazy pucharowej w żadnej symulacji.")
 
 st.set_page_config(
     page_title="Symulator MŚ",
@@ -860,8 +1064,8 @@ if run_btn:
     st.success(f"✅ Ukończono {int(n_simulations):,} symulacji!")
 
 # Zakładki
-tab_groups, tab_bracket, tab_probable, tab_results, tab_info = st.tabs(
-    ["📋 Grupy", "🗂️ Drabinka", "🎯 Najbardziej prawdopodobna drabinka", "📊 Wyniki symulacji", "ℹ️ Opis działania"]
+tab_groups, tab_bracket, tab_probable, tab_results, tab_team, tab_info = st.tabs(
+    ["📋 Grupy", "🗂️ Drabinka", "🎯 Najbardziej prawdopodobna drabinka", "📊 Wyniki symulacji", "👕 Szczegóły drużyn", "ℹ️ Opis działania"]
 )
 
 with tab_groups:
@@ -1294,4 +1498,18 @@ with tab_results:
         st.info(
             "Ustaw parametry w panelu bocznym i kliknij **▶ Uruchom symulację**, "
             "aby zobaczyć wyniki."
+        )
+
+with tab_team:
+    if "stats" in st.session_state:
+        p = st.session_state["sim_params"]
+        st.caption(
+            f"Parametry: lambda_base={p['lambda_base']}, k={p['k']}, "
+            f"n={p['n']:,} symulacji"
+        )
+        display_team_info(st.session_state["stats"])
+    elif not run_btn:
+        st.info(
+            "Ustaw parametry w panelu bocznym i kliknij **▶ Uruchom symulację**, "
+            "aby zobaczyć szczegółowe statystyki drużyn."
         )
