@@ -401,8 +401,8 @@ def _render_half(
 ) -> str:
     """Render top or bottom bracket half with connectors between rounds."""
     is_top = half_class == "bfly-half-top"
-    # góra: R32→SF; dół: SF→R32 (zbieganie do środka od dołu)
-    specs = round_specs if is_top else list(reversed(round_specs))
+    # Góra: R32→SF w dół. Dół: SF→R32 (półfinał przy środku, 1/16 na dole).
+    specs = round_specs
     rows = []
     for idx, (round_label, match_ids, col_span) in enumerate(specs):
         rows.append(
