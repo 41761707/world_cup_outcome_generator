@@ -225,14 +225,48 @@ def _text_right_edge_x(
 
 
 GROUP_CARD_TEAM_FLAG_X = 0.075
-GROUP_CARD_TEXT_X = 0.17
+GROUP_CARD_TEXT_X = 0.12
 GROUP_CARD_TEXT_FLAG_GAP = 0.03
-GROUP_CARD_MATCHUP_SCORE_GAP = 0.05
 GROUP_CARD_SCORE_DOTS_GAP = 0.06
 GROUP_CARD_SCORE_W = 0.13
 GROUP_CARD_DOTS_W = 0.19
-GROUP_CARD_MIN_SCORE_LEFT = 0.50
 GROUP_CARD_RIGHT_MARGIN = 0.95
+WR_BADGE_FILLS = {"#2f9e44": "#b2f2bb", "#e03131": "#ffc9c9"}
+SCORE_BADGE_FILLS = {
+    "#339af0": "#a5d8ff",
+    "#37b24d": "#8ce99a",
+    "#f59f00": "#ffe066",
+}
+
+
+def _add_rounded_rect(
+    ax: plt.Axes,
+    xy: tuple[float, float],
+    width: float,
+    height: float,
+    *,
+    facecolor: str,
+    edgecolor: str = "none",
+    linewidth: float = 0,
+    alpha: float = 1.0,
+    corner_radius: float | None = None,
+    zorder: float = 2,
+) -> FancyBboxPatch:
+    """Draw a rounded rectangle with a modest corner radius."""
+    radius = corner_radius if corner_radius is not None else min(height * 0.14, 0.015)
+    patch = FancyBboxPatch(
+        xy,
+        width,
+        height,
+        boxstyle=f"round,pad=0,rounding_size={radius}",
+        facecolor=facecolor,
+        edgecolor=edgecolor,
+        linewidth=linewidth,
+        alpha=alpha,
+        zorder=zorder,
+    )
+    ax.add_patch(patch)
+    return patch
 
 
 def _opponent_matchup_label(opponent: str) -> tuple[str, float, float]:
@@ -250,23 +284,11 @@ def _opponent_matchup_label(opponent: str) -> tuple[str, float, float]:
     return f"vs {opponent}", 14, 1.0
 
 
-def _group_card_score_layout(
-    matchup_right: float,
-) -> tuple[float, float, float]:
-    """Compute score-box and dots x positions after the matchup block."""
-    score_left = max(
-        GROUP_CARD_MIN_SCORE_LEFT,
-        matchup_right + GROUP_CARD_MATCHUP_SCORE_GAP,
-    )
-    max_score_left = (
-        GROUP_CARD_RIGHT_MARGIN
-        - GROUP_CARD_SCORE_W
-        - GROUP_CARD_DOTS_W
-        - GROUP_CARD_SCORE_DOTS_GAP
-    )
-    score_left = min(score_left, max_score_left)
+def _group_card_score_layout() -> tuple[float, float, float]:
+    """Return fixed right-aligned score-box and dots x positions."""
+    dots_x = GROUP_CARD_RIGHT_MARGIN - GROUP_CARD_DOTS_W
+    score_left = dots_x - GROUP_CARD_SCORE_DOTS_GAP - GROUP_CARD_SCORE_W
     score_cx = score_left + GROUP_CARD_SCORE_W / 2
-    dots_x = score_left + GROUP_CARD_SCORE_W + GROUP_CARD_SCORE_DOTS_GAP
     return score_left, score_cx, dots_x
 
 
@@ -494,7 +516,7 @@ def _draw_gradient_header(
         facecolor=(1, 1, 1, 0.08), edgecolor=(1, 1, 1, 0.25), linewidth=1.5,
         zorder=1,
     ))
-    add_flag(ax, team, (0.09, 0.5), zoom=0.75)
+    add_flag(ax, team, (0.09, 0.5), zoom=1.5)
     ax.text(0.19, 0.62, team, fontsize=30, fontweight="bold", color="white", zorder=2)
     title, highlight, accent = team_headline(team, stages, n, winner_ranks)
     ax.text(0.19, 0.38, title, fontsize=16, color="#c8d6e5", zorder=2)
@@ -620,24 +642,23 @@ def draw_opponents_panel(
             facecolor=bg, edgecolor="#dee2e6", linewidth=1,
         ))
         ax.text(0.06, y - 0.03, stage_label, fontsize=14, color="#868e96", fontweight="bold")
-        add_flag(ax, opponent, (0.08, y - card_h / 2 - 0.01), zoom=0.4)
+        add_flag(ax, opponent, (0.08, y - card_h / 2 - 0.01), zoom=0.45)
         ax.text(
-            0.13, y - card_h / 2 - 0.01, opponent,
+            0.13, y - card_h / 2 - 0.02, opponent,
             fontsize=22, fontweight="bold", va="center",
         )
         ax.text(
-            0.55, y - card_h / 2 - 0.01,
+            0.55, y - card_h / 2 - 0.02,
             f"{meet_pct:.1f}% spotkań",
             fontsize=20, color="#495057", va="center",
         )
         wr_color = "#2f9e44" if win_pct >= 50 else "#e03131"
-        ax.add_patch(FancyBboxPatch(
-            (0.78, y - card_h / 2 - 0.045), 0.16, 0.09,
-            boxstyle="round,pad=0.005,rounding_size=0.02",
-            facecolor=wr_color, edgecolor="none", alpha=0.15,
-        ))
+        _add_rounded_rect(
+            ax, (0.78, y - card_h / 2 - 0.045), 0.16, 0.09,
+            facecolor=WR_BADGE_FILLS[wr_color], zorder=3,
+        )
         ax.text(
-            0.86, y - card_h / 2 - 0.01,
+            0.86, y - card_h / 2 - 0.02,
             f"{win_pct:.0f}% WR",
             fontsize=18, fontweight="bold", color=wr_color,
             ha="center", va="center",
@@ -653,10 +674,11 @@ def _draw_score_dots(
     color: str,
     n_dots: int = 12,
 ) -> None:
-    """Render a compact dot matrix for match-outcome frequency."""
+    """Render a compact tick matrix for match-outcome frequency."""
     filled = int(round(min(pct, 100) / 100 * n_dots))
     cols = 6
-    dot_r = 0.011
+    tick_w = 0.024
+    tick_h = 0.018
     gap_x = 0.028
     gap_y = 0.034
     for index in range(n_dots):
@@ -664,8 +686,15 @@ def _draw_score_dots(
         cx = x + col * gap_x
         cy = y - row * gap_y
         face = color if index < filled else "#dee2e6"
-        circle = plt.Circle((cx, cy), dot_r, color=face, zorder=3)
-        ax.add_patch(circle)
+        _add_rounded_rect(
+            ax,
+            (cx - tick_w / 2, cy - tick_h / 2),
+            tick_w,
+            tick_h,
+            facecolor=face,
+            corner_radius=0.003,
+            zorder=3,
+        )
 
 
 def draw_group_panel(
@@ -713,21 +742,20 @@ def draw_group_panel(
             va="center", linespacing=line_spacing,
         )
         opponent_flag_x = _text_right_edge_x(ax, fig, vs_text) + GROUP_CARD_TEXT_FLAG_GAP
-        opponent_flag = add_flag(
+        add_flag(
             ax, opponent, (opponent_flag_x, mid_y),
             zoom=0.62, box_alignment=(0.0, 0.5),
         )
-        if opponent_flag is not None:
-            matchup_right = _artist_right_edge_x(ax, fig, opponent_flag)
-        else:
-            matchup_right = _text_right_edge_x(ax, fig, vs_text)
-        score_left, score_cx, dots_x = _group_card_score_layout(matchup_right)
+        score_left, score_cx, dots_x = _group_card_score_layout()
         score_h = 0.13
-        ax.add_patch(FancyBboxPatch(
-            (score_left, mid_y - score_h / 2), GROUP_CARD_SCORE_W, score_h,
-            boxstyle="round,pad=0.01,rounding_size=0.02",
-            facecolor=accent, edgecolor="none", alpha=0.15,
-        ))
+        _add_rounded_rect(
+            ax,
+            (score_left, mid_y - score_h / 2),
+            GROUP_CARD_SCORE_W,
+            score_h,
+            facecolor=SCORE_BADGE_FILLS[accent],
+            zorder=3,
+        )
         ax.text(
             score_cx, mid_y, score,
             fontsize=23, fontweight="bold", color=accent,
@@ -735,9 +763,10 @@ def draw_group_panel(
         )
         _draw_score_dots(ax, dots_x, mid_y + 0.045, pct, accent)
         ax.text(
-            dots_x, mid_y - 0.095,
+            dots_x + GROUP_CARD_DOTS_W / 2, mid_y - 0.095,
             f"{pct:.1f}%",
             fontsize=15, fontweight="bold", color="#495057",
+            ha="center",
         )
         y -= card_h + 0.01
 
