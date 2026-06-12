@@ -1,5 +1,5 @@
-A: Meksyk - Republika Południowej Afryki
-A: Korea Południowa - Czechy
+A: Meksyk - Republika Południowej Afryki 2-0
+A: Korea Południowa - Czechy 2-1
 A: Czechy - Republika Południowej Afryki
 A: Meksyk - Korea Południowa
 A: Czechy - Meksyk

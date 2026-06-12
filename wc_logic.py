@@ -304,30 +304,6 @@ def create_groups(groups_file: str, countries: list[Country]) -> list[Group]:
         return groups
 
 
-def load_schedule(
-    schedule_file: str,
-    countries_by_name: dict[str, Country],
-) -> dict[str, list[tuple[Country, Country]]]:
-    """Load group-stage fixtures, optionally stripping preset scores."""
-    schedules: dict[str, list[tuple[Country, Country]]] = {}
-    with open(schedule_file, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            group_name, pair_str = line.split(":", 1)
-            group_name = group_name.strip()
-            pair_str = pair_str.strip()
-            # Odetnij opcjonalny wynik na końcu (np. "2-1")
-            parts = pair_str.rsplit(None, 1)
-            if len(parts) == 2 and is_score(parts[1]):
-                pair_str = parts[0].strip()
-            home, away = [n.strip() for n in pair_str.split(" - ", 1)]
-            pair = (countries_by_name[home], countries_by_name[away])
-            schedules.setdefault(group_name, []).append(pair)
-    return schedules
-
-
 def is_score(s: str) -> bool:
     """Return True if string looks like a score (e.g. '2-1')."""
     parts = s.split("-")
@@ -341,6 +317,55 @@ def is_score(s: str) -> bool:
         return False
 
 
+def parse_group_fixture_line(
+    pair_str: str,
+) -> tuple[str, str, tuple[int, int] | None]:
+    """Parse 'Home - Away' or 'Home - Away 2-0' into teams and optional score."""
+    pair_str = pair_str.strip()
+    preset: tuple[int, int] | None = None
+    parts = pair_str.rsplit(None, 1)
+    if len(parts) == 2 and is_score(parts[1]):
+        pair_str = parts[0].strip()
+        s1, s2 = parts[1].split("-")
+        preset = (int(s1), int(s2))
+    home, away = [n.strip() for n in pair_str.split(" - ", 1)]
+    return home, away, preset
+
+
+def load_group_schedule_pairs(
+    schedule_file: str,
+) -> dict[str, list[tuple[str, str]]]:
+    """Load group fixtures as team-name pairs, stripping embedded scores."""
+    schedules: dict[str, list[tuple[str, str]]] = {}
+    with open(schedule_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            group_name, pair_str = line.split(":", 1)
+            home, away, _ = parse_group_fixture_line(pair_str)
+            schedules.setdefault(group_name.strip(), []).append((home, away))
+    return schedules
+
+
+def load_schedule(
+    schedule_file: str,
+    countries_by_name: dict[str, Country],
+) -> dict[str, list[tuple[Country, Country]]]:
+    """Load group-stage fixtures, optionally stripping preset scores."""
+    schedules: dict[str, list[tuple[Country, Country]]] = {}
+    with open(schedule_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            group_name, pair_str = line.split(":", 1)
+            home, away, _ = parse_group_fixture_line(pair_str)
+            pair = (countries_by_name[home], countries_by_name[away])
+            schedules.setdefault(group_name.strip(), []).append(pair)
+    return schedules
+
+
 def load_schedule_presets(
     schedule_file: str,
 ) -> dict[tuple[str, str], tuple[int, int]]:
@@ -352,12 +377,9 @@ def load_schedule_presets(
             if not line:
                 continue
             _, pair_str = line.split(":", 1)
-            pair_str = pair_str.strip()
-            parts = pair_str.rsplit(None, 1)
-            if len(parts) == 2 and is_score(parts[1]):
-                s1, s2 = parts[1].split("-")
-                home, away = [n.strip() for n in parts[0].split(" - ", 1)]
-                presets[(home, away)] = (int(s1), int(s2))
+            home, away, preset = parse_group_fixture_line(pair_str)
+            if preset is not None:
+                presets[(home, away)] = preset
     return presets
 
 

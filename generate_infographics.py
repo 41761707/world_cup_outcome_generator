@@ -1,7 +1,4 @@
-"""Generate per-team tournament infographics from one Monte Carlo run."""
-
 from __future__ import annotations
-
 import argparse
 import contextlib
 import io
@@ -16,7 +13,6 @@ import numpy as np
 from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from matplotlib.patches import FancyBboxPatch
 from PIL import Image
-
 from main import run_monte_carlo
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -33,9 +29,7 @@ K_FACTOR = 0.3
 REACH_HIDE_THRESHOLD = 95.0
 EXIT_SLICE_MIN_PCT = 1.5
 
-STAGES_ORDER = [
-    "Grupa", "R_32", "R_16", "QF", "SF", "3RD", "F", "Zwycięzca",
-]
+STAGES_ORDER = ["Grupa", "R_32", "R_16", "QF", "SF", "3RD", "F", "Zwycięzca"]
 STAGES_LABELS = {
     "Grupa": "Faza grupowa",
     "R_32": "1/16 finału",
@@ -44,7 +38,7 @@ STAGES_LABELS = {
     "SF": "Półfinał",
     "3RD": "3. miejsce",
     "F": "Finał",
-    "Zwycięzca": "Zwycięzca",
+    "Zwycięzca": "Zwycięzca"
 }
 STAGE_COLORS = {
     "Faza grupowa": "#868e96",
@@ -55,7 +49,7 @@ STAGE_COLORS = {
     "3. miejsce": "#be4bdb",
     "Finał": "#fa5252",
     "Zwycięzca": "#40c057",
-    "Inne": "#ced4da",
+    "Inne": "#ced4da"
 }
 KO_STAGES = ["R_32", "R_16", "QF", "SF", "3RD", "F"]
 ROUND_LABELS = {
@@ -64,7 +58,7 @@ ROUND_LABELS = {
     "QF": "Ćwierćfinały",
     "SF": "Półfinały",
     "3RD": "Mecz o 3. miejsce",
-    "F": "Finał",
+    "F": "Finał"
 }
 CUMULATIVE_STAGES = [
     ("1/16 finału", ("R_32", "R_16", "QF", "SF", "3RD", "F", "Zwycięzca")),
@@ -72,7 +66,7 @@ CUMULATIVE_STAGES = [
     ("Ćwierćfinał", ("QF", "SF", "3RD", "F", "Zwycięzca")),
     ("Półfinał", ("SF", "3RD", "F", "Zwycięzca")),
     ("Finał", ("F", "Zwycięzca")),
-    ("Zwycięzca", ("Zwycięzca",)),
+    ("Zwycięzca", ("Zwycięzca",))
 ]
 KO_REACH_LABEL = {
     "R_32": "1/16 finału",
@@ -80,22 +74,22 @@ KO_REACH_LABEL = {
     "QF": "Ćwierćfinał",
     "SF": "Półfinał",
     "3RD": "Półfinał",
-    "F": "Finał",
+    "F": "Finał"
 }
 REACH_BAR_COLORS = ["#12b886", "#20c997", "#22b8cf", "#339af0", "#7950f2", "#e64980"]
 PAGE_BG = "#eef2f7"
 HEADER_GRADIENT = ("#0b1d3a", "#1e3a6e", "#2d5aa0")
-TIER_EXIT_STAGES: dict[str, tuple[str, ...]] = {
+TIER_EXIT_STAGES = {
     "Faza grupowa": ("Grupa",),
     "1/16 finału": ("R_32",),
     "1/8 finału": ("R_16",),
     "Ćwierćfinał": ("QF",),
     "Półfinał": ("SF", "3RD"),
     "Finał": ("F",),
-    "Zwycięzca": ("Zwycięzca",),
+    "Zwycięzca": ("Zwycięzca",)
 }
 
-COUNTRY_FLAG_CODES: dict[str, str] = {
+COUNTRY_FLAG_CODES = {
     "Czechy": "cz",
     "Meksyk": "mx",
     "Republika Południowej Afryki": "za",
@@ -146,6 +140,20 @@ COUNTRY_FLAG_CODES: dict[str, str] = {
     "Panama": "pa",
 }
 
+GROUP_CARD_TEAM_FLAG_X = 0.075
+GROUP_CARD_TEXT_X = 0.12
+GROUP_CARD_TEXT_FLAG_GAP = 0.03
+GROUP_CARD_SCORE_DOTS_GAP = 0.06
+GROUP_CARD_SCORE_W = 0.13
+GROUP_CARD_DOTS_W = 0.19
+GROUP_CARD_RIGHT_MARGIN = 0.95
+WR_BADGE_FILLS = {"#2f9e44": "#b2f2bb", "#e03131": "#ffc9c9"}
+SCORE_BADGE_FILLS = {
+    "#339af0": "#a5d8ff",
+    "#37b24d": "#8ce99a",
+    "#f59f00": "#ffe066",
+}
+
 
 def load_groups_data() -> tuple[dict[str, list[str]], dict[str, str]]:
     """Return group members and team-to-group mapping."""
@@ -190,7 +198,6 @@ def add_flag(
     country: str,
     xy: tuple[float, float],
     zoom: float,
-    *,
     box_alignment: tuple[float, float] = (0.5, 0.5),
 ) -> AnnotationBbox | None:
     """Place a flag image on an axes."""
@@ -222,21 +229,6 @@ def _text_right_edge_x(
 ) -> float:
     """Return the data-x coordinate at the right edge of a text object."""
     return _artist_right_edge_x(ax, fig, text_obj)
-
-
-GROUP_CARD_TEAM_FLAG_X = 0.075
-GROUP_CARD_TEXT_X = 0.12
-GROUP_CARD_TEXT_FLAG_GAP = 0.03
-GROUP_CARD_SCORE_DOTS_GAP = 0.06
-GROUP_CARD_SCORE_W = 0.13
-GROUP_CARD_DOTS_W = 0.19
-GROUP_CARD_RIGHT_MARGIN = 0.95
-WR_BADGE_FILLS = {"#2f9e44": "#b2f2bb", "#e03131": "#ffc9c9"}
-SCORE_BADGE_FILLS = {
-    "#339af0": "#a5d8ff",
-    "#37b24d": "#8ce99a",
-    "#f59f00": "#ffe066",
-}
 
 
 def _add_rounded_rect(
@@ -303,30 +295,27 @@ def meaningful_cumulative_stages(
     threshold: float = REACH_HIDE_THRESHOLD,
 ) -> list[tuple[str, tuple[str, ...]]]:
     """Skip early stages that are nearly guaranteed for strong teams."""
-    visible = []
+    visible: list[tuple[str, tuple[str, ...]]] = []
+    first_stage = CUMULATIVE_STAGES[0]
+    winner_stage = CUMULATIVE_STAGES[-1]
+    first_hidden = False
     for label, stage_set in CUMULATIVE_STAGES:
         pct = reach_probability(stages, stage_set, n)
         if pct < threshold:
             visible.append((label, stage_set))
-    return visible or [CUMULATIVE_STAGES[-1]]
-
-
-def meaningful_ko_stages(
-    stages: list[str],
-    n: int,
-    threshold: float = REACH_HIDE_THRESHOLD,
-) -> list[str]:
-    """Return knockout rounds worth showing for this team."""
-    visible = []
-    seen_labels: set[str] = set()
-    for stage in KO_STAGES:
-        reach_label = KO_REACH_LABEL[stage]
-        if reach_label in seen_labels:
-            continue
-        seen_labels.add(reach_label)
-        stage_set = next(s for lbl, s in CUMULATIVE_STAGES if lbl == reach_label)
-        if reach_probability(stages, stage_set, n) < threshold:
-            visible.append(stage)
+        elif label == first_stage[0]:
+            first_hidden = True
+    if not visible:
+        return [winner_stage]
+    # Dla mocnych drużyn wolimy pasek 1/16 zamiast Zwycięzcy, gdy ten pierwszy
+    # został ukryty jako niemal pewny.
+    if first_hidden and any(label == winner_stage[0] for label, _ in visible):
+        visible = [
+            (label, stage_set)
+            for label, stage_set in visible
+            if label != winner_stage[0]
+        ]
+        visible.insert(0, first_stage)
     return visible
 
 
@@ -397,7 +386,7 @@ def team_headline(
     tier_label = tier_exit_label(rank)
     tier_pct = exit_pct_at_label(stages, n, tier_label)
 
-    if winner_pct >= 12:
+    if winner_pct >= 10:
         return (
             "Faworyt do mistrzostwa",
             f"{winner_pct:.1f}% szans na złoto",
@@ -412,7 +401,7 @@ def team_headline(
     dist = exit_stage_distribution(stages, min_pct=0.0)
     modal_label, _, modal_pct = max(dist, key=lambda row: row[1])
     return (
-        "Najczęstszy etap zakończenia",
+        "Oczekiwany etap zakończenia",
         f"{modal_label}  ·  {modal_pct:.1f}%",
         STAGE_COLORS.get(modal_label, "#dee2e6"),
     )
@@ -444,7 +433,6 @@ def top_opponents_by_stage(
         opponent = next(iter(pair - {team}))
         wins = ko_wins.get((pair, stage), {}).get(team, 0)
         by_stage[stage].append((opponent, count, wins))
-
     rows: list[tuple[str, str, float, float]] = []
     for stage in KO_STAGES:
         stage_rows = by_stage.get(stage)
@@ -520,7 +508,7 @@ def _draw_gradient_header(
     ax.text(0.19, 0.62, team, fontsize=30, fontweight="bold", color="white", zorder=2)
     title, highlight, accent = team_headline(team, stages, n, winner_ranks)
     ax.text(0.19, 0.38, title, fontsize=16, color="#c8d6e5", zorder=2)
-    ax.text(0.19, 0.22, highlight, fontsize=22, fontweight="bold", color=accent, zorder=2)
+    ax.text(0.19, 0.18, highlight, fontsize=22, fontweight="bold", color=accent, zorder=2)
     ax.text(
         0.97, 0.1,
         f"{n:,} sym.  ·  k={K_FACTOR}  ·  λ={LAMBDA_BASE}",
@@ -658,7 +646,7 @@ def draw_opponents_panel(
             facecolor=WR_BADGE_FILLS[wr_color], zorder=3,
         )
         ax.text(
-            0.86, y - card_h / 2 - 0.02,
+            0.86, y - card_h / 2 - 0.01,
             f"{win_pct:.0f}% WR",
             fontsize=18, fontweight="bold", color=wr_color,
             ha="center", va="center",
@@ -672,11 +660,11 @@ def _draw_score_dots(
     y: float,
     pct: float,
     color: str,
-    n_dots: int = 12,
+    n_dots: int = 10,
 ) -> None:
     """Render a compact tick matrix for match-outcome frequency."""
-    filled = int(round(min(pct, 100) / 100 * n_dots))
-    cols = 6
+    fill_units = min(pct, 100) / 100 * n_dots
+    cols = 5
     tick_w = 0.024
     tick_h = 0.018
     gap_x = 0.028
@@ -685,15 +673,28 @@ def _draw_score_dots(
         row, col = divmod(index, cols)
         cx = x + col * gap_x
         cy = y - row * gap_y
-        face = color if index < filled else "#dee2e6"
+        left = cx - tick_w / 2
+        bottom = cy - tick_h / 2
         _add_rounded_rect(
             ax,
-            (cx - tick_w / 2, cy - tick_h / 2),
+            (left, bottom),
             tick_w,
             tick_h,
-            facecolor=face,
+            facecolor="#dee2e6",
             corner_radius=0.003,
             zorder=3,
+        )
+        segment_fill = min(1.0, max(0.0, fill_units - index))
+        if segment_fill <= 0:
+            continue
+        _add_rounded_rect(
+            ax,
+            (left, bottom),
+            tick_w * segment_fill,
+            tick_h,
+            facecolor=color,
+            corner_radius=0.003,
+            zorder=4,
         )
 
 
@@ -827,7 +828,7 @@ def run_infographic_generation(
             str(SCHEDULE_KNOCKOUT_FILE),
             n=n_simulations,
             lambda_base=LAMBDA_BASE,
-            k=K_FACTOR,
+            k=K_FACTOR
         )
     print("Symulacja zakończona. Generuję infografiki...")
     group_members, team_group = load_groups_data()

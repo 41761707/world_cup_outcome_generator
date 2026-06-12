@@ -28,6 +28,7 @@ from main import run_monte_carlo
 from wc_logic import (
     assign_thirds_to_slots,
     get_countries,
+    load_group_schedule_pairs,
     load_knockout_schedule,
     load_schedule_presets,
 )
@@ -59,8 +60,27 @@ ROUND_LABELS = {
 }
 
 
+def _schedule_groups_mtime() -> float:
+    """Return schedule file mtime so Streamlit cache refreshes after edits."""
+    return os.path.getmtime(SCHEDULE_GROUPS_FILE)
+
+
+def _effective_fixed_group_results(
+    schedule_presets: dict[tuple[str, str], tuple[int, int]],
+    use_presets: bool,
+    manual: dict[tuple[str, str], tuple[int, int]] | None,
+) -> dict[tuple[str, str], tuple[int, int]] | None:
+    """Merge file presets and manually applied results for simulation."""
+    merged: dict[tuple[str, str], tuple[int, int]] = {}
+    if use_presets and schedule_presets:
+        merged.update(schedule_presets)
+    if manual:
+        merged.update(manual)
+    return merged or None
+
+
 @st.cache_data
-def load_initial_data() -> tuple[
+def load_initial_data(schedule_mtime: float) -> tuple[
     dict[str, list[tuple[str, int]]],
     dict[str, list[tuple[str, str]]],
     list[tuple[str, Any, Any]],
@@ -78,15 +98,7 @@ def load_initial_data() -> tuple[
             group_name, rest = line.split(":", 1)
             names = [n.strip() for n in rest.split(",")]
             groups_data[group_name] = [(n, elo_map.get(n, 0)) for n in names]
-    group_schedule: dict[str, list[tuple[str, str]]] = {}
-    with open(SCHEDULE_GROUPS_FILE, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            group_name, pair_str = line.split(":", 1)
-            home, away = [n.strip() for n in pair_str.split(" - ", 1)]
-            group_schedule.setdefault(group_name.strip(), []).append((home, away))
+    group_schedule = load_group_schedule_pairs(SCHEDULE_GROUPS_FILE)
     knockout_raw = load_knockout_schedule(SCHEDULE_KNOCKOUT_FILE)
     schedule_presets = load_schedule_presets(SCHEDULE_GROUPS_FILE)
     return groups_data, group_schedule, knockout_raw, schedule_presets
@@ -971,7 +983,7 @@ def display_results(stats: dict):
                 "Drużyna 1": t1,
                 "Drużyna 2": t2,
                 "Spotkań": count,
-                "Procent": f"{100 * count / n:.1f}%",
+                "Procent": f"{100 * count / n:.1f}%"
             }
         )
     st.dataframe(pd.DataFrame(ko_rows), use_container_width=True, hide_index=True)
@@ -979,11 +991,13 @@ def display_results(stats: dict):
 st.set_page_config(
     page_title="Symulator MŚ",
     page_icon="⚽",
-    layout="wide",
+    layout="wide"
 )
 st.title("⚽ Symulator Mistrzostw Świata")
 st.caption("Analiza Monte Carlo — rozkłady prawdopodobieństwa wyników wszystkich drużyn. Wybierz parametry symulacji po lewej stronie i kliknij 'Uruchom symulację'.")
-groups_data, group_schedule, knockout_raw, schedule_presets = load_initial_data()
+groups_data, group_schedule, knockout_raw, schedule_presets = load_initial_data(
+    _schedule_groups_mtime(),
+)
 
 # Wykrywanie szerokości ekranu przy pierwszym ładowaniu — ustawia domyślną orientację wykresów
 if "horizontal_charts" not in st.session_state:
@@ -998,8 +1012,7 @@ if "horizontal_charts" not in st.session_state:
         window.parent.postMessage(msg, "*");
         </script>
         """,
-        height=0,
-    )
+        height=0)
     st.session_state["horizontal_charts"] = False
 
 # Pasek boczny
@@ -1013,7 +1026,7 @@ with st.sidebar:
             value=1.3,
             step=0.05,
             format="%.2f",
-            help="Bazowe oczekiwane gole na drużynę przy równych ELO (typowo 1.0–1.5 dla MŚ)",
+            help="Bazowe oczekiwane gole na drużynę przy równych ELO (typowo 1.0–1.5 dla MŚ)"
         )
         k = st.number_input(
             "k (skala wpływu ELO)",
@@ -1022,7 +1035,7 @@ with st.sidebar:
             value=0.25,
             step=0.01,
             format="%.2f",
-            help="Jak mocno różnica ELO skaluje oczekiwane gole (Dobierac eksperymentalnie, typowo 0.1–0.3)",
+            help="Jak mocno różnica ELO skaluje oczekiwane gole (Dobierac eksperymentalnie, typowo 0.1–0.3)"
         )
         n_simulations = st.number_input(
             "Liczba symulacji",
@@ -1030,7 +1043,7 @@ with st.sidebar:
             max_value=100_000,
             value=1000,
             step=1,
-            help="Więcej symulacji = dokładniejsze wyniki, ale dłuższy czas obliczeń",
+            help="Więcej symulacji = dokładniejsze wyniki, ale dłuższy czas obliczeń"
         )
         st.divider()
         run_btn = st.form_submit_button("▶ Uruchom symulację", type="primary", use_container_width=True)
@@ -1038,7 +1051,7 @@ with st.sidebar:
     st.checkbox(
         "📱 Poziome wykresy",
         key="horizontal_charts",
-        help="Włącz dla telefonów i wąskich ekranów. Na komputerze domyślnie wyłączone.",
+        help="Włącz dla telefonów i wąskich ekranów. Na komputerze domyślnie wyłączone."
     )
 
 # Symulacja
@@ -1046,6 +1059,10 @@ if run_btn:
     with st.spinner(f"Trwa symulacja {int(n_simulations):,} turniejów… ⏳"):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
+            _use_presets = (
+                st.session_state.get("use_presets", bool(schedule_presets))
+                and bool(schedule_presets)
+            )
             _stats = run_monte_carlo(
                 COUNTRIES_FILE,
                 GROUPS_FILE,
@@ -1054,7 +1071,11 @@ if run_btn:
                 n=int(n_simulations),
                 lambda_base=float(lambda_base),
                 k=float(k),
-                fixed_group_results=st.session_state.get("fixed_group_results"),
+                fixed_group_results=_effective_fixed_group_results(
+                    schedule_presets,
+                    _use_presets,
+                    st.session_state.get("fixed_group_results"),
+                ),
                 fixed_knockout_results=st.session_state.get(
                     "fixed_knockout_results"
                 ),
@@ -1075,7 +1096,7 @@ tab_groups, tab_butterfly, tab_probable, tab_results, tab_team, tab_info = st.ta
         "🎯 Najbardziej prawdopodobna drabinka",
         "📊 Wyniki symulacji",
         "👕 Szczegóły drużyn",
-        "ℹ️ Opis działania",
+        "ℹ️ Opis działania"
     ]
 )
 
@@ -1135,10 +1156,33 @@ with tab_groups:
             st.success("Wszystkie wyniki grupowe zostały wyczyszczone.")
         elif "fixed_group_results" not in st.session_state:
             st.session_state["fixed_group_results"] = None
-        _saved = st.session_state.get("fixed_group_results")
+        _saved = _effective_fixed_group_results(
+            schedule_presets,
+            use_presets,
+            st.session_state.get("fixed_group_results"),
+        )
         if _saved:
             n_saved = len(_saved)
-            st.info(f"Aktualnie zapisano: {n_saved} {'mecz' if n_saved == 1 else 'mecze' if n_saved in (2, 3, 4) else 'meczów'}.")
+            n_from_file = (
+                len(schedule_presets)
+                if use_presets and schedule_presets
+                else 0
+            )
+            n_manual = len(st.session_state.get("fixed_group_results") or {})
+            if n_from_file and n_manual:
+                detail = (
+                    f"{n_from_file} z harmonogramu, "
+                    f"{n_manual} z formularza"
+                )
+            elif n_from_file:
+                detail = f"{n_from_file} z harmonogramu"
+            else:
+                detail = f"{n_manual} z formularza"
+            st.info(
+                f"Aktywne wyniki: {n_saved} "
+                f"{'mecz' if n_saved == 1 else 'mecze' if n_saved in (2, 3, 4) else 'meczów'} "
+                f"({detail})."
+            )
 
     _lb = st.session_state.get("stats", {}).get("last_bracket")
     if _lb:
@@ -1164,7 +1208,7 @@ with tab_groups:
                 "Pkt": stats["points"],
                 "RB": stats["goal_diff"],
                 "G": stats["goals_scored"],
-                "_qualified": idx < 8,
+                "_qualified": idx < 8
             }
             for idx, (gname, name, stats) in enumerate(thirds_last_sorted)
         ]
@@ -1187,6 +1231,7 @@ with tab_groups:
                     st.markdown(f"{t1_bold} {m['score1']} – {m['score2']} {t2_bold}")
     else:
         st.subheader("Podział na grupy")
+        display_groups(groups_data)
 
 
 with tab_butterfly:

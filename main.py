@@ -168,7 +168,7 @@ def run_monte_carlo(
             key: dict(scores) for key, scores in group_match_score_counts.items()
         },
         "n_simulations": n,
-        "last_bracket": last_bracket,
+        "last_bracket": last_bracket
     }
 
 
