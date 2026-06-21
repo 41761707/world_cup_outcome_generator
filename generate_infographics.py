@@ -1,31 +1,32 @@
 from __future__ import annotations
+
 import argparse
-import contextlib
-import io
-import urllib.error
-import urllib.request
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from matplotlib.patches import FancyBboxPatch
-from PIL import Image
-from main import run_monte_carlo
 
-BASE_DIR = Path(__file__).resolve().parent
-COUNTRIES_FILE = BASE_DIR / "countries.txt"
-GROUPS_FILE = BASE_DIR / "groups.txt"
-SCHEDULE_GROUPS_FILE = BASE_DIR / "schedule_groups.txt"
-SCHEDULE_KNOCKOUT_FILE = BASE_DIR / "schedule_knockout.txt"
-OUTPUT_DIR = BASE_DIR / "infographic"
-FLAG_CACHE_DIR = OUTPUT_DIR / ".flag_cache"
-
-N_SIMULATIONS = 1_000
-LAMBDA_BASE = 1.3
-K_FACTOR = 0.3
+from infographic_common import (
+    K_FACTOR,
+    LAMBDA_BASE,
+    N_SIMULATIONS,
+    OUTPUT_DIR,
+    PAGE_BG,
+    HEADER_GRADIENT,
+    add_flag,
+    add_rounded_rect,
+    collect_match_score_counts,
+    draw_score_dots,
+    format_preset_notice,
+    load_groups_data,
+    resolve_fixed_group_results,
+    run_simulation,
+    save_figure,
+    text_right_edge_x,
+)
 REACH_HIDE_THRESHOLD = 95.0
 EXIT_SLICE_MIN_PCT = 1.5
 
@@ -77,8 +78,6 @@ KO_REACH_LABEL = {
     "F": "Finał"
 }
 REACH_BAR_COLORS = ["#12b886", "#20c997", "#22b8cf", "#339af0", "#7950f2", "#e64980"]
-PAGE_BG = "#eef2f7"
-HEADER_GRADIENT = ("#0b1d3a", "#1e3a6e", "#2d5aa0")
 TIER_EXIT_STAGES = {
     "Faza grupowa": ("Grupa",),
     "1/16 finału": ("R_32",),
@@ -87,57 +86,6 @@ TIER_EXIT_STAGES = {
     "Półfinał": ("SF", "3RD"),
     "Finał": ("F",),
     "Zwycięzca": ("Zwycięzca",)
-}
-
-COUNTRY_FLAG_CODES = {
-    "Czechy": "cz",
-    "Meksyk": "mx",
-    "Republika Południowej Afryki": "za",
-    "Korea Południowa": "kr",
-    "Szwajcaria": "ch",
-    "Bośnia i Hercegowina": "ba",
-    "Kanada": "ca",
-    "Katar": "qa",
-    "Szkocja": "gb-sct",
-    "Brazylia": "br",
-    "Haiti": "ht",
-    "Maroko": "ma",
-    "Turcja": "tr",
-    "Paragwaj": "py",
-    "USA": "us",
-    "Australia": "au",
-    "Niemcy": "de",
-    "Ekwador": "ec",
-    "Wybrzeże Kości Słoniowej": "ci",
-    "Curacao": "cw",
-    "Szwecja": "se",
-    "Holandia": "nl",
-    "Tunezja": "tn",
-    "Japonia": "jp",
-    "Belgia": "be",
-    "Egipt": "eg",
-    "Iran": "ir",
-    "Nowa Zelandia": "nz",
-    "Hiszpania": "es",
-    "Urugwaj": "uy",
-    "Republika Zielonego Przylądka": "cv",
-    "Arabia Saudyjska": "sa",
-    "Francja": "fr",
-    "Norwegia": "no",
-    "Senegal": "sn",
-    "Irak": "iq",
-    "Austria": "at",
-    "Argentyna": "ar",
-    "Algieria": "dz",
-    "Jordania": "jo",
-    "Portugalia": "pt",
-    "Kolumbia": "co",
-    "DR Konga": "cd",
-    "Uzbekistan": "uz",
-    "Chorwacja": "hr",
-    "Anglia": "gb-eng",
-    "Ghana": "gh",
-    "Panama": "pa",
 }
 
 GROUP_CARD_TEAM_FLAG_X = 0.075
@@ -153,112 +101,6 @@ SCORE_BADGE_FILLS = {
     "#37b24d": "#8ce99a",
     "#f59f00": "#ffe066",
 }
-
-
-def load_groups_data() -> tuple[dict[str, list[str]], dict[str, str]]:
-    """Return group members and team-to-group mapping."""
-    members: dict[str, list[str]] = {}
-    team_group: dict[str, str] = {}
-    with open(GROUPS_FILE, encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            group_name, rest = line.split(":", 1)
-            names = [n.strip() for n in rest.split(",")]
-            members[group_name.strip()] = names
-            for name in names:
-                team_group[name] = group_name.strip()
-    return members, team_group
-
-
-def load_flag_image(country: str, zoom: float = 0.35) -> OffsetImage | None:
-    """Load a cached flag image for matplotlib embedding."""
-    code = COUNTRY_FLAG_CODES.get(country)
-    if not code:
-        return None
-    FLAG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_path = FLAG_CACHE_DIR / f"{code.replace('-', '_')}.png"
-    if not cache_path.exists():
-        url = f"https://flagcdn.com/w80/{code}.png"
-        try:
-            with urllib.request.urlopen(url, timeout=15) as response:
-                cache_path.write_bytes(response.read())
-        except (urllib.error.URLError, TimeoutError, OSError):
-            return None
-    try:
-        image = Image.open(cache_path).convert("RGBA")
-    except OSError:
-        return None
-    return OffsetImage(np.asarray(image), zoom=zoom)
-
-
-def add_flag(
-    ax: plt.Axes,
-    country: str,
-    xy: tuple[float, float],
-    zoom: float,
-    box_alignment: tuple[float, float] = (0.5, 0.5),
-) -> AnnotationBbox | None:
-    """Place a flag image on an axes."""
-    flag = load_flag_image(country, zoom=zoom)
-    if flag is None:
-        return None
-    artist = AnnotationBbox(
-        flag, xy, frameon=False, box_alignment=box_alignment,
-    )
-    ax.add_artist(artist)
-    return artist
-
-
-def _artist_right_edge_x(
-    ax: plt.Axes,
-    fig: plt.Figure,
-    artist: plt.Artist,
-) -> float:
-    """Return the data-x coordinate at the right edge of a drawn artist."""
-    fig.canvas.draw()
-    bbox = artist.get_window_extent(fig.canvas.get_renderer())
-    return ax.transData.inverted().transform((bbox.x1, bbox.y0))[0]
-
-
-def _text_right_edge_x(
-    ax: plt.Axes,
-    fig: plt.Figure,
-    text_obj: plt.Text,
-) -> float:
-    """Return the data-x coordinate at the right edge of a text object."""
-    return _artist_right_edge_x(ax, fig, text_obj)
-
-
-def _add_rounded_rect(
-    ax: plt.Axes,
-    xy: tuple[float, float],
-    width: float,
-    height: float,
-    *,
-    facecolor: str,
-    edgecolor: str = "none",
-    linewidth: float = 0,
-    alpha: float = 1.0,
-    corner_radius: float | None = None,
-    zorder: float = 2,
-) -> FancyBboxPatch:
-    """Draw a rounded rectangle with a modest corner radius."""
-    radius = corner_radius if corner_radius is not None else min(height * 0.14, 0.015)
-    patch = FancyBboxPatch(
-        xy,
-        width,
-        height,
-        boxstyle=f"round,pad=0,rounding_size={radius}",
-        facecolor=facecolor,
-        edgecolor=edgecolor,
-        linewidth=linewidth,
-        alpha=alpha,
-        zorder=zorder,
-    )
-    ax.add_patch(patch)
-    return patch
 
 
 def _opponent_matchup_label(opponent: str) -> tuple[str, float, float]:
@@ -452,14 +294,9 @@ def group_opponent_scores(
     n: int,
 ) -> list[tuple[str, str, float, int]]:
     """Return the modal group-stage score vs each opponent."""
-    score_counts = stats.get("group_match_score_counts", {})
     rows: list[tuple[str, str, float, int]] = []
     for opponent in opponents:
-        counts: dict[tuple[int, int], int] = defaultdict(int)
-        for (s1, s2), count in score_counts.get((team, opponent), {}).items():
-            counts[(s1, s2)] += count
-        for (s1, s2), count in score_counts.get((opponent, team), {}).items():
-            counts[(s2, s1)] += count
+        counts = collect_match_score_counts(stats, team, opponent)
         if not counts:
             rows.append((opponent, "—", 0.0, 0))
             continue
@@ -641,7 +478,7 @@ def draw_opponents_panel(
             fontsize=20, color="#495057", va="center",
         )
         wr_color = "#2f9e44" if win_pct >= 50 else "#e03131"
-        _add_rounded_rect(
+        add_rounded_rect(
             ax, (0.78, y - card_h / 2 - 0.045), 0.16, 0.09,
             facecolor=WR_BADGE_FILLS[wr_color], zorder=3,
         )
@@ -652,50 +489,6 @@ def draw_opponents_panel(
             ha="center", va="center",
         )
         y -= card_h
-
-
-def _draw_score_dots(
-    ax: plt.Axes,
-    x: float,
-    y: float,
-    pct: float,
-    color: str,
-    n_dots: int = 10,
-) -> None:
-    """Render a compact tick matrix for match-outcome frequency."""
-    fill_units = min(pct, 100) / 100 * n_dots
-    cols = 5
-    tick_w = 0.024
-    tick_h = 0.018
-    gap_x = 0.028
-    gap_y = 0.034
-    for index in range(n_dots):
-        row, col = divmod(index, cols)
-        cx = x + col * gap_x
-        cy = y - row * gap_y
-        left = cx - tick_w / 2
-        bottom = cy - tick_h / 2
-        _add_rounded_rect(
-            ax,
-            (left, bottom),
-            tick_w,
-            tick_h,
-            facecolor="#dee2e6",
-            corner_radius=0.003,
-            zorder=3,
-        )
-        segment_fill = min(1.0, max(0.0, fill_units - index))
-        if segment_fill <= 0:
-            continue
-        _add_rounded_rect(
-            ax,
-            (left, bottom),
-            tick_w * segment_fill,
-            tick_h,
-            facecolor=color,
-            corner_radius=0.003,
-            zorder=4,
-        )
 
 
 def draw_group_panel(
@@ -742,14 +535,14 @@ def draw_group_panel(
             fontsize=matchup_fontsize, fontweight="bold",
             va="center", linespacing=line_spacing,
         )
-        opponent_flag_x = _text_right_edge_x(ax, fig, vs_text) + GROUP_CARD_TEXT_FLAG_GAP
+        opponent_flag_x = text_right_edge_x(ax, fig, vs_text) + GROUP_CARD_TEXT_FLAG_GAP
         add_flag(
             ax, opponent, (opponent_flag_x, mid_y),
             zoom=0.62, box_alignment=(0.0, 0.5),
         )
         score_left, score_cx, dots_x = _group_card_score_layout()
         score_h = 0.13
-        _add_rounded_rect(
+        add_rounded_rect(
             ax,
             (score_left, mid_y - score_h / 2),
             GROUP_CARD_SCORE_W,
@@ -762,7 +555,7 @@ def draw_group_panel(
             fontsize=23, fontweight="bold", color=accent,
             ha="center", va="center",
         )
-        _draw_score_dots(ax, dots_x, mid_y + 0.045, pct, accent)
+        draw_score_dots(ax, dots_x, mid_y + 0.045, pct, accent)
         ax.text(
             dots_x + GROUP_CARD_DOTS_W / 2, mid_y - 0.095,
             f"{pct:.1f}%",
@@ -806,30 +599,29 @@ def generate_team_infographic(
     team_dir = output_dir / team
     team_dir.mkdir(parents=True, exist_ok=True)
     out_path = team_dir / "infographic.png"
-    fig.savefig(out_path, dpi=160, bbox_inches="tight", facecolor=PAGE_BG)
-    plt.close(fig)
-    return out_path
+    return save_figure(fig, out_path)
 
 
 def run_infographic_generation(
     n_simulations: int = N_SIMULATIONS,
     teams: list[str] | None = None,
+    use_schedule_presets: bool = True,
 ) -> list[Path]:
     """Run one simulation and export infographics."""
+    fixed_results = resolve_fixed_group_results(
+        None,
+        use_schedule_presets=use_schedule_presets,
+    )
     print(
         f"Uruchamiam {n_simulations:,} symulacji "
         f"(k={K_FACTOR}, lambda_base={LAMBDA_BASE})..."
     )
-    with contextlib.redirect_stdout(io.StringIO()):
-        stats = run_monte_carlo(
-            str(COUNTRIES_FILE),
-            str(GROUPS_FILE),
-            str(SCHEDULE_GROUPS_FILE),
-            str(SCHEDULE_KNOCKOUT_FILE),
-            n=n_simulations,
-            lambda_base=LAMBDA_BASE,
-            k=K_FACTOR
-        )
+    print(format_preset_notice(fixed_results))
+    stats = run_simulation(
+        n=n_simulations,
+        use_schedule_presets=use_schedule_presets,
+        quiet=True,
+    )
     print("Symulacja zakończona. Generuję infografiki...")
     group_members, team_group = load_groups_data()
     winner_ranks = compute_winner_ranks(stats)
@@ -857,9 +649,24 @@ def main() -> None:
     parser.add_argument(
         "--teams", nargs="*", help="Opcjonalnie: tylko wybrane drużyny",
     )
+    parser.add_argument(
+        "--ignore-presets",
+        action="store_true",
+        help="Ignoruj znane wyniki z schedule_groups.txt",
+    )
     args = parser.parse_args()
-    run_infographic_generation(n_simulations=args.simulations, teams=args.teams)
+    run_infographic_generation(
+        n_simulations=args.simulations,
+        teams=args.teams,
+        use_schedule_presets=not args.ignore_presets,
+    )
 
 
 if __name__ == "__main__":
     main()
+
+
+# Backward-compatible aliases for older import paths
+_add_rounded_rect = add_rounded_rect
+_draw_score_dots = draw_score_dots
+_text_right_edge_x = text_right_edge_x

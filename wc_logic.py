@@ -1,11 +1,105 @@
-"""Core World Cup tournament simulation logic."""
-
 from __future__ import annotations
-
 import sys
 from typing import Any
-
 import numpy as np
+
+
+def _match_points(goals_for: int, goals_against: int) -> int:
+    """Return table points for one team in one match."""
+    if goals_for > goals_against:
+        return 3
+    if goals_for == goals_against:
+        return 1
+    return 0
+
+
+def _head_to_head_stats(
+    tied_teams: list[str],
+    match_results: list[tuple[str, str, int, int]],
+) -> dict[str, dict[str, int]]:
+    """Return mini-table stats for teams tied on overall points."""
+    tied_set = set(tied_teams)
+    stats = {
+        team: {"points": 0, "goal_diff": 0, "goals_scored": 0}
+        for team in tied_teams
+    }
+    for home, away, home_score, away_score in match_results:
+        if home not in tied_set or away not in tied_set:
+            continue
+        stats[home]["points"] += _match_points(home_score, away_score)
+        stats[away]["points"] += _match_points(away_score, home_score)
+        stats[home]["goal_diff"] += home_score - away_score
+        stats[away]["goal_diff"] += away_score - home_score
+        stats[home]["goals_scored"] += home_score
+        stats[away]["goals_scored"] += away_score
+    return stats
+
+
+def _overall_tiebreak_order(
+    teams: list[str],
+    standings: dict[str, dict[str, int]],
+) -> list[str]:
+    """Rank teams by full-group goal difference and goals scored."""
+    return sorted(
+        teams,
+        key=lambda team: (
+            standings[team]["goal_diff"],
+            standings[team]["goals_scored"],
+        ),
+        reverse=True,
+    )
+
+
+def _rank_same_points_teams(
+    tied_teams: list[str],
+    standings: dict[str, dict[str, int]],
+    match_results: list[tuple[str, str, int, int]],
+) -> list[str]:
+    """Rank teams that finished level on points using H2H first."""
+    if len(tied_teams) == 1:
+        return tied_teams
+    h2h = _head_to_head_stats(tied_teams, match_results)
+    buckets: dict[tuple[int, int, int], list[str]] = {}
+    for team in tied_teams:
+        key = (
+            h2h[team]["points"],
+            h2h[team]["goal_diff"],
+            h2h[team]["goals_scored"],
+        )
+        buckets.setdefault(key, []).append(team)
+
+    ranked: list[str] = []
+    for key in sorted(buckets.keys(), reverse=True):
+        bucket = buckets[key]
+        if len(bucket) == 1:
+            ranked.extend(bucket)
+        elif len(bucket) < len(tied_teams):
+            ranked.extend(_rank_same_points_teams(bucket, standings, match_results))
+        else:
+            ranked.extend(_overall_tiebreak_order(bucket, standings))
+    return ranked
+
+
+def rank_group_teams(
+    team_names: list[str],
+    standings: dict[str, dict[str, int]],
+    match_results: list[tuple[str, str, int, int]],
+) -> list[str]:
+    """Return group order with head-to-head as first points tiebreaker."""
+    points_buckets: dict[int, list[str]] = {}
+    for team in team_names:
+        points_buckets.setdefault(standings[team]["points"], []).append(team)
+
+    order: list[str] = []
+    for points in sorted(points_buckets.keys(), reverse=True):
+        order.extend(
+            _rank_same_points_teams(
+                points_buckets[points],
+                standings,
+                match_results,
+            ),
+        )
+    return order
 
 
 class Country:
@@ -17,7 +111,7 @@ class Country:
 
     def evaluate_const(self, goal_diff: int) -> float:
         """Return ELO K-factor adjusted for goal difference."""
-        constant = 64.0
+        constant = 60.0
         if goal_diff == 2:
             constant = constant * 3 / 2
         elif goal_diff == 3:
@@ -96,17 +190,22 @@ class Group:
             standings[match.country2.name]["goal_diff"] += match.score2 - match.score1
             standings[match.country1.name]["goals_scored"] += match.score1
             standings[match.country2.name]["goals_scored"] += match.score2
-        sorted_items = sorted(
-            standings.items(),
-            key=lambda x: (
-                x[1]["points"],
-                x[1]["goal_diff"],
-                x[1]["goals_scored"],
-            ),
-            reverse=True,
+        match_results = [
+            (
+                match.country1.name,
+                match.country2.name,
+                match.score1,
+                match.score2,
+            )
+            for match in matches
+        ]
+        ordered_names = rank_group_teams(
+            [country.name for country in self.countries],
+            standings,
+            match_results,
         )
         self.standings = [
-            (name_to_country[name], stats) for name, stats in sorted_items
+            (name_to_country[name], standings[name]) for name in ordered_names
         ]
         return self.standings
 

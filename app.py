@@ -1,5 +1,3 @@
-"""Streamlit UI for World Cup Monte Carlo simulations."""
-
 from __future__ import annotations
 
 import contextlib
@@ -24,6 +22,7 @@ from bracket_viz import (
     probable_bracket_from_stats,
     results_from_last_bracket,
 )
+from group_stats import build_group_infographic_data
 from main import run_monte_carlo
 from wc_logic import (
     assign_thirds_to_slots,
@@ -31,6 +30,7 @@ from wc_logic import (
     load_group_schedule_pairs,
     load_knockout_schedule,
     load_schedule_presets,
+    rank_group_teams,
 )
 
 # TODO: stałe do konfiga
@@ -58,6 +58,18 @@ ROUND_LABELS = {
     "3RD": "Mecz o 3. miejsce",
     "F": "Finał",
 }
+POINTS_COLOR_SCALE = "Greens"
+POSITION_COLUMN_COLORS = {
+    "1.": (64, 192, 87),
+    "2.": (190, 220, 80),
+    "3.": (255, 212, 59),
+    "4.": (250, 82, 82),
+}
+IMPACT_BEFORE_COLOR = "#868e96"
+IMPACT_GAIN_COLOR = "#40c057"
+IMPACT_LOSS_COLOR = "#fa5252"
+BAR_VALUE_FONT_SIZE = 18
+TABLE_VALUE_FONT_SIZE = "1.05rem"
 
 
 def _schedule_groups_mtime() -> float:
@@ -116,6 +128,25 @@ def _fmt_slot(slot: tuple) -> str:
     return f"{suffix} {label}"
 
 
+def _position_distribution_styles(position_df: pd.DataFrame) -> pd.DataFrame:
+    """Return table styles for group position probabilities."""
+    styles = pd.DataFrame("", index=position_df.index, columns=position_df.columns)
+    for column, rgb in POSITION_COLUMN_COLORS.items():
+        if column not in position_df.columns:
+            continue
+        red, green, blue = rgb
+        for team_name, value in position_df[column].items():
+            alpha = 0.16 + 0.84 * (float(value) / 100)
+            text_color = "#ffffff" if alpha >= 0.62 else "#111111"
+            styles.loc[team_name, column] = (
+                f"background-color: rgba({red}, {green}, {blue}, {alpha:.2f}); "
+                f"color: {text_color}; "
+                f"font-size: {TABLE_VALUE_FONT_SIZE}; "
+                "font-weight: 700;"
+            )
+    return styles
+
+
 def _group_by_round(
     knockout_raw: list[tuple[str, Any, Any]],
 ) -> dict[str, list[tuple[str, Any, Any]]]:
@@ -149,11 +180,13 @@ def _calc_group_standings(
             continue
         teams = [name for name, _ in groups_data[gname]]
         stats = {t: {"pts": 0, "gd": 0, "gs": 0} for t in teams}
+        match_results = []
         for home, away in matches:
             if (home, away) in fr:
                 s1, s2 = fr[(home, away)]
             else:
                 s2, s1 = fr[(away, home)]
+            match_results.append((home, away, s1, s2))
             stats[home]["gd"] += s1 - s2
             stats[away]["gd"] += s2 - s1
             stats[home]["gs"] += s1
@@ -165,7 +198,15 @@ def _calc_group_standings(
             else:
                 stats[home]["pts"] += 1
                 stats[away]["pts"] += 1
-        order = sorted(teams, key=lambda t: (stats[t]["pts"], stats[t]["gd"], stats[t]["gs"]), reverse=True)
+        ranking_stats = {
+            team: {
+                "points": team_stats["pts"],
+                "goal_diff": team_stats["gd"],
+                "goals_scored": team_stats["gs"],
+            }
+            for team, team_stats in stats.items()
+        }
+        order = rank_group_teams(teams, ranking_stats, match_results)
         group_standings[gname] = {"order": order, "stats": stats}
     return group_standings
 
@@ -391,9 +432,9 @@ def display_probable_groups(stats: dict) -> None:
         st.dataframe(pd.DataFrame(rows).set_index("#"), use_container_width=True)
 
 
-def display_probable_bracket(stats: dict) -> None:
+def display_probable_bracket(stats: dict, knockout_raw: list[tuple]) -> None:
     """Render most probable knockout bracket using butterfly layout."""
-    labels, results = probable_bracket_from_stats(stats)
+    labels, results = probable_bracket_from_stats(stats, knockout_raw)
     html_content = build_butterfly_bracket_html(labels, results)
     components.html(html_content, height=1180, scrolling=True)
 
@@ -683,7 +724,7 @@ def display_team_info(stats: dict):
             hovertemplate="<b>%{label}</b><br>%{value} symulacji (%{percent})<extra></extra>",
         )
         fig_detail.update_layout(showlegend=True)
-        st.plotly_chart(fig_detail, use_container_width=True)
+        st.plotly_chart(fig_detail, use_container_width=True, key="team_detail_pie")
     st.markdown("**Szansa na dotarcie do etapu (lub dalej)**")
     cumulative_data = [
         ("1/16 finału",  ("R_32", "R_16", "QF", "SF", "3RD", "F", "Zwycięzca")),
@@ -714,7 +755,7 @@ def display_team_info(stats: dict):
         xaxis_title=None,
         margin=dict(b=40, t=20),
     )
-    st.plotly_chart(fig_cumul, use_container_width=True)
+    st.plotly_chart(fig_cumul, use_container_width=True, key="team_detail_cumul")
     st.markdown("**Najczęstsi rywale w fazie pucharowej**")
     ko_counts = stats["knockout_meeting_counts"]
     ko_wins = stats.get("knockout_meeting_wins", {})
@@ -823,16 +864,626 @@ def display_group_score_distributions(
             )
             st.markdown(f"**{home} – {away}** · {unique_n} {unique_label}")
             bars_fig = _group_match_score_top_bars(counts, n)
+            chart_key = f"group_score_bars_{gname}"
             if st.session_state.get("horizontal_charts", False):
                 st.markdown("**Najczęstsze wyniki**")
-                st.plotly_chart(bars_fig, use_container_width=True)
+                st.plotly_chart(
+                    bars_fig, use_container_width=True, key=chart_key,
+                )
             else:
                 st.markdown(
                     "<div style='font-size:0.8rem;color:#868e96;margin-bottom:4px'>"
                     "Najczęstsze wyniki</div>",
                     unsafe_allow_html=True,
                 )
-                st.plotly_chart(bars_fig, use_container_width=True)
+                st.plotly_chart(
+                    bars_fig, use_container_width=True, key=chart_key,
+                )
+
+
+INFOGRAPHIC_REACH_STAGES = (
+    "R_32",
+    "R_16",
+    "QF",
+    "SF",
+    "3RD",
+    "F",
+    "Zwycięzca",
+)
+INFOGRAPHIC_CUMULATIVE_STAGES = [
+    ("1/16 finału", ("R_32", "R_16", "QF", "SF", "3RD", "F", "Zwycięzca")),
+    ("1/8 finału", ("R_16", "QF", "SF", "3RD", "F", "Zwycięzca")),
+    ("Ćwierćfinał", ("QF", "SF", "3RD", "F", "Zwycięzca")),
+    ("Półfinał", ("SF", "3RD", "F", "Zwycięzca")),
+    ("Finał", ("F", "Zwycięzca")),
+    ("Zwycięzca", ("Zwycięzca",)),
+]
+
+
+def _collect_match_score_counts(
+    stats: dict[str, Any],
+    team_a: str,
+    team_b: str,
+) -> dict[tuple[int, int], int]:
+    """Return score counts from team_a perspective."""
+    counts: dict[tuple[int, int], int] = defaultdict(int)
+    score_counts = stats.get("group_match_score_counts", {})
+    for (s1, s2), count in score_counts.get((team_a, team_b), {}).items():
+        counts[(s1, s2)] += count
+    for (s1, s2), count in score_counts.get((team_b, team_a), {}).items():
+        counts[(s2, s1)] += count
+    return dict(counts)
+
+
+def _reach_pct(
+    stats: dict[str, Any],
+    team: str,
+    stage_set: tuple[str, ...] = INFOGRAPHIC_REACH_STAGES,
+) -> float:
+    """Return cumulative reach percentage for a team."""
+    stages = stats["team_exit_stages"][team]
+    n = stats["n_simulations"]
+    return 100 * sum(1 for stage in stages if stage in stage_set) / n
+
+
+def _exit_distribution_df(stats: dict[str, Any], team: str) -> pd.DataFrame:
+    """Return exit-stage distribution for one team."""
+    n = stats["n_simulations"]
+    stages = stats["team_exit_stages"][team]
+    return pd.DataFrame(
+        [
+            {
+                "Etap": STAGES_LABELS[stage],
+                "Procent": round(100 * stages.count(stage) / n, 2),
+                "Liczba": stages.count(stage),
+            }
+            for stage in STAGES_ORDER
+            if stages.count(stage) > 0
+        ]
+    )
+
+
+def _cumulative_reach_df(stats: dict[str, Any], team: str) -> pd.DataFrame:
+    """Return cumulative reach probabilities for one team."""
+    stages = stats["team_exit_stages"][team]
+    n = stats["n_simulations"]
+    return pd.DataFrame(
+        [
+            {
+                "Etap": label,
+                "Procent": round(
+                    100 * sum(1 for stage in stages if stage in stage_set) / n,
+                    2,
+                ),
+            }
+            for label, stage_set in INFOGRAPHIC_CUMULATIVE_STAGES
+        ]
+    )
+
+
+def _team_group_lookup(
+    groups_data: dict[str, list[tuple[str, int]]],
+) -> dict[str, str]:
+    """Return mapping from team name to group name."""
+    return {
+        team: group_name
+        for group_name, teams in groups_data.items()
+        for team, _elo in teams
+    }
+
+
+def _group_members(
+    groups_data: dict[str, list[tuple[str, int]]],
+    group_name: str,
+) -> list[str]:
+    """Return team names for one group."""
+    return [team for team, _elo in groups_data[group_name]]
+
+
+def _show_team_infographic_report(
+    stats: dict[str, Any],
+    groups_data: dict[str, list[tuple[str, int]]],
+) -> None:
+    """Render team-level infographic content inside Streamlit."""
+    team_group = _team_group_lookup(groups_data)
+    selected = st.selectbox(
+        "Wybierz drużynę",
+        sorted(stats["team_exit_stages"].keys()),
+        key="infographic_team_select",
+    )
+    group_name = team_group[selected]
+    opponents = [
+        team
+        for team in _group_members(groups_data, group_name)
+        if team != selected
+    ]
+    exit_df = _exit_distribution_df(stats, selected)
+    best_exit = exit_df.sort_values("Procent", ascending=False).iloc[0]
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("Najczęstszy koniec", best_exit["Etap"])
+    col_b.metric("Szansa awansu z grupy", f"{_reach_pct(stats, selected):.1f}%")
+    winner_pct = _reach_pct(stats, selected, ("Zwycięzca",))
+    col_c.metric("Szansa na tytuł", f"{winner_pct:.1f}%")
+
+    chart_a, chart_b = st.columns([1, 1])
+    with chart_a:
+        st.markdown("**Gdzie kończy turniej?**")
+        fig_exit = px.pie(
+            exit_df,
+            names="Etap",
+            values="Liczba",
+            color="Etap",
+        )
+        fig_exit.update_traces(textinfo="percent+label")
+        st.plotly_chart(fig_exit, use_container_width=True, key="inf_team_exit")
+    with chart_b:
+        st.markdown("**Szansa dotarcia do etapu lub dalej**")
+        reach_df = _cumulative_reach_df(stats, selected)
+        fig_reach = px.bar(
+            reach_df,
+            x="Procent",
+            y="Etap",
+            orientation="h",
+            text="Procent",
+            color="Procent",
+            color_continuous_scale="YlGn",
+        )
+        fig_reach.update_traces(texttemplate="%{text:.1f}%")
+        fig_reach.update_layout(coloraxis_showscale=False, yaxis_title=None)
+        st.plotly_chart(fig_reach, use_container_width=True, key="inf_team_reach")
+
+    rows = []
+    n = stats["n_simulations"]
+    for opponent in opponents:
+        counts = _collect_match_score_counts(stats, selected, opponent)
+        if not counts:
+            continue
+        (score_for, score_against), count = max(
+            counts.items(), key=lambda item: item[1],
+        )
+        rows.append(
+            {
+                "Rywal w grupie": opponent,
+                "Najczęstszy wynik": f"{score_for}:{score_against}",
+                "Procent": f"{100 * count / n:.1f}%",
+            }
+        )
+    st.markdown("**Najczęstsze wyniki w grupie**")
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+def _show_group_infographic_report(
+    stats: dict[str, Any],
+    groups_data: dict[str, list[tuple[str, int]]],
+) -> None:
+    """Render group-level infographic content inside Streamlit."""
+    group_name = st.selectbox(
+        "Wybierz grupę",
+        sorted(groups_data.keys()),
+        key="infographic_group_select",
+    )
+    data = build_group_infographic_data(
+        group_name,
+        _group_members(groups_data, group_name),
+        stats,
+    )
+    points_df = pd.DataFrame(
+        [
+            {
+                "Drużyna": team.name,
+                "Oczekiwane punkty": round(team.expected_points, 2),
+                "Awans bezpośredni": round(team.direct_advance_pct, 1),
+                "Awans z 3. miejsca": round(team.third_advance_pct, 1),
+                "Odpadnięcie": round(team.eliminated_pct, 1),
+            }
+            for team in data.teams
+        ]
+    )
+    st.markdown(f"**Grupa {data.group_name} · {data.n_simulations:,} symulacji**")
+    fig_points = px.bar(
+        points_df,
+        x="Oczekiwane punkty",
+        y="Drużyna",
+        orientation="h",
+        text="Oczekiwane punkty",
+        color="Oczekiwane punkty",
+        color_continuous_scale=POINTS_COLOR_SCALE,
+    )
+    fig_points.update_layout(coloraxis_showscale=False, yaxis_title=None)
+    fig_points.update_traces(
+        textfont_size=BAR_VALUE_FONT_SIZE,
+        textfont_color="#111111",
+        textfont_family="Arial Black",
+    )
+    st.plotly_chart(fig_points, use_container_width=True, key="inf_group_pts")
+
+    advance_df = points_df.melt(
+        id_vars="Drużyna",
+        value_vars=["Awans bezpośredni", "Awans z 3. miejsca", "Odpadnięcie"],
+        var_name="Status",
+        value_name="Procent",
+    )
+    fig_advance = px.bar(
+        advance_df,
+        x="Drużyna",
+        y="Procent",
+        color="Status",
+        text="Procent",
+        barmode="stack",
+        color_discrete_map={
+            "Awans bezpośredni": "#40c057",
+            "Awans z 3. miejsca": "#339af0",
+            "Odpadnięcie": "#fa5252",
+        },
+    )
+    fig_advance.update_traces(
+        texttemplate="%{text:.0f}%",
+        textfont_size=BAR_VALUE_FONT_SIZE,
+        textfont_family="Arial Black",
+    )
+    st.plotly_chart(fig_advance, use_container_width=True, key="inf_group_adv")
+
+    position_df = pd.DataFrame(
+        [
+            {
+                "Drużyna": team.name,
+                "1.": team.position_pcts[0],
+                "2.": team.position_pcts[1],
+                "3.": team.position_pcts[2],
+                "4.": team.position_pcts[3],
+            }
+            for team in data.teams
+        ]
+    ).set_index("Drużyna")
+    st.markdown("**Rozkład miejsc w grupie**")
+    st.dataframe(
+        position_df.style.apply(
+            _position_distribution_styles,
+            axis=None,
+        ).format("{:.1f}%").set_table_styles(
+            [
+                {
+                    "selector": "th",
+                    "props": [
+                        ("font-size", "1rem"),
+                        ("font-weight", "700"),
+                    ],
+                },
+                {
+                    "selector": "td",
+                    "props": [
+                        ("font-size", TABLE_VALUE_FONT_SIZE),
+                        ("font-weight", "700"),
+                    ],
+                },
+            ],
+        ),
+        use_container_width=True,
+    )
+
+
+def _match_outcome_rows(
+    counts: dict[tuple[int, int], int],
+    home: str,
+    away: str,
+) -> list[dict[str, Any]]:
+    """Return win/draw/loss rows for one fixture."""
+    total = sum(counts.values()) or 1
+    home_wins = sum(count for (s1, s2), count in counts.items() if s1 > s2)
+    draws = sum(count for (s1, s2), count in counts.items() if s1 == s2)
+    away_wins = sum(count for (s1, s2), count in counts.items() if s1 < s2)
+    return [
+        {"Wynik": f"Wygrana {home}", "Procent": 100 * home_wins / total},
+        {"Wynik": "Remis", "Procent": 100 * draws / total},
+        {"Wynik": f"Wygrana {away}", "Procent": 100 * away_wins / total},
+    ]
+
+
+def _total_goals_rows(
+    counts: dict[tuple[int, int], int],
+) -> list[dict[str, Any]]:
+    """Return total-goals distribution rows for one fixture."""
+    total = sum(counts.values()) or 1
+    goal_counts: dict[int, int] = defaultdict(int)
+    for (home_score, away_score), count in counts.items():
+        goal_counts[home_score + away_score] += count
+    return [
+        {
+            "Suma bramek": goals,
+            "Procent": 100 * count / total,
+            "Liczba": count,
+        }
+        for goals, count in sorted(goal_counts.items())
+    ]
+
+
+def _btts_rows(counts: dict[tuple[int, int], int]) -> list[dict[str, Any]]:
+    """Return BTTS yes/no percentages for one fixture."""
+    total = sum(counts.values()) or 1
+    yes_count = sum(
+        count
+        for (home_score, away_score), count in counts.items()
+        if home_score > 0 and away_score > 0
+    )
+    no_count = total - yes_count
+    return [
+        {"Typ": "Obie strzelą", "Procent": 100 * yes_count / total},
+        {"Typ": "Nie obie strzelą", "Procent": 100 * no_count / total},
+    ]
+
+
+def _show_match_infographic_report(
+    stats: dict[str, Any],
+    group_schedule: dict[str, list[tuple[str, str]]],
+) -> None:
+    """Render head-to-head group-match infographic content."""
+    group_name = st.selectbox(
+        "Wybierz grupę",
+        sorted(group_schedule.keys()),
+        key="infographic_match_group",
+    )
+    matches = group_schedule[group_name]
+    labels = [f"{home} – {away}" for home, away in matches]
+    selected = st.selectbox(
+        "Wybierz mecz",
+        labels,
+        key="infographic_match_select",
+    )
+    home, away = matches[labels.index(selected)]
+    counts = _collect_match_score_counts(stats, home, away)
+    if not counts:
+        st.info("Brak danych dla tego meczu w aktualnej symulacji.")
+        return
+
+    (modal_home, modal_away), modal_count = max(
+        counts.items(), key=lambda item: item[1],
+    )
+    n = stats["n_simulations"]
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("Najczęstszy wynik", f"{modal_home}:{modal_away}")
+    col_b.metric("Częstość wyniku", f"{100 * modal_count / n:.1f}%")
+    col_c.metric("Liczba wariantów", len(counts))
+
+    outcome_df = pd.DataFrame(_match_outcome_rows(counts, home, away))
+    fig_outcome = px.bar(
+        outcome_df,
+        x="Procent",
+        y="Wynik",
+        orientation="h",
+        text="Procent",
+        color="Wynik",
+    )
+    fig_outcome.update_traces(texttemplate="%{text:.1f}%")
+    fig_outcome.update_layout(showlegend=False, yaxis_title=None)
+    st.plotly_chart(fig_outcome, use_container_width=True, key="inf_match_out")
+
+    goals_col, btts_col = st.columns([3, 2])
+    with goals_col:
+        st.markdown("**Ile bramek pada w meczu?**")
+        goals_df = pd.DataFrame(_total_goals_rows(counts))
+        fig_goals = px.bar(
+            goals_df,
+            x="Suma bramek",
+            y="Procent",
+            text="Procent",
+            color="Procent",
+            color_continuous_scale="Blues",
+            custom_data=["Liczba"],
+        )
+        fig_goals.update_traces(
+            texttemplate="%{text:.1f}%",
+            hovertemplate=(
+                "<b>%{x} bramek</b><br>"
+                "%{customdata[0]} razy (%{y:.1f}%)<extra></extra>"
+            ),
+        )
+        fig_goals.update_layout(
+            coloraxis_showscale=False,
+            xaxis_title="Łączna liczba bramek",
+            yaxis_title="Prawdopodobieństwo (%)",
+        )
+        st.plotly_chart(fig_goals, use_container_width=True, key="inf_goals")
+    with btts_col:
+        st.markdown("**Czy obie drużyny strzelą?**")
+        btts_df = pd.DataFrame(_btts_rows(counts))
+        fig_btts = px.pie(
+            btts_df,
+            names="Typ",
+            values="Procent",
+            color="Typ",
+            color_discrete_map={
+                "Obie strzelą": "#40c057",
+                "Nie obie strzelą": "#fa5252",
+            },
+        )
+        fig_btts.update_traces(textinfo="percent+label")
+        st.plotly_chart(fig_btts, use_container_width=True, key="inf_btts")
+
+    st.markdown("**Najczęstsze dokładne wyniki**")
+    st.plotly_chart(
+        _group_match_score_top_bars(counts, n),
+        use_container_width=True,
+        key="inf_match_scores",
+    )
+
+
+def _run_forced_group_result(
+    home: str,
+    away: str,
+    home_score: int,
+    away_score: int,
+    schedule_presets: dict[tuple[str, str], tuple[int, int]],
+) -> dict[str, Any]:
+    """Run current simulation settings with one forced group result."""
+    params = st.session_state["sim_params"]
+    use_presets = (
+        st.session_state.get("use_presets", bool(schedule_presets))
+        and bool(schedule_presets)
+    )
+    fixed_results = _effective_fixed_group_results(
+        schedule_presets,
+        use_presets,
+        st.session_state.get("fixed_group_results"),
+    ) or {}
+    fixed_results = dict(fixed_results)
+    fixed_results[(home, away)] = (home_score, away_score)
+    return run_monte_carlo(
+        COUNTRIES_FILE,
+        GROUPS_FILE,
+        SCHEDULE_GROUPS_FILE,
+        SCHEDULE_KNOCKOUT_FILE,
+        n=params["n"],
+        lambda_base=params["lambda_base"],
+        k=params["k"],
+        fixed_group_results=fixed_results,
+        fixed_knockout_results=st.session_state.get("fixed_knockout_results"),
+    )
+
+
+def _show_match_impact_report(
+    stats: dict[str, Any],
+    group_schedule: dict[str, list[tuple[str, str]]],
+    schedule_presets: dict[tuple[str, str], tuple[int, int]],
+) -> None:
+    """Render before/after impact of forcing one group result."""
+    group_name = st.selectbox(
+        "Wybierz grupę",
+        sorted(group_schedule.keys()),
+        key="infographic_impact_group",
+    )
+    matches = group_schedule[group_name]
+    labels = [f"{home} – {away}" for home, away in matches]
+    selected = st.selectbox(
+        "Wybierz mecz",
+        labels,
+        key="infographic_impact_match",
+    )
+    home, away = matches[labels.index(selected)]
+    col_score_a, col_score_b = st.columns(2)
+    home_score = col_score_a.number_input(
+        f"Gole: {home}",
+        min_value=0,
+        max_value=30,
+        value=1,
+        step=1,
+        key="infographic_impact_home_score",
+    )
+    away_score = col_score_b.number_input(
+        f"Gole: {away}",
+        min_value=0,
+        max_value=30,
+        value=1,
+        step=1,
+        key="infographic_impact_away_score",
+    )
+    if not st.button(
+        "Przelicz wpływ wyniku",
+        type="primary",
+        use_container_width=True,
+        key="infographic_impact_run",
+    ):
+        st.caption(
+            "Porównanie używa aktualnej symulacji jako bazy i przelicza wariant "
+            "z wybranym wynikiem."
+        )
+        return
+
+    with st.spinner("Przeliczam wariant z ustalonym wynikiem..."):
+        with contextlib.redirect_stdout(io.StringIO()):
+            after_stats = _run_forced_group_result(
+                home,
+                away,
+                int(home_score),
+                int(away_score),
+                schedule_presets,
+            )
+    rows = []
+    for team in (home, away):
+        before = _reach_pct(stats, team)
+        after = _reach_pct(after_stats, team)
+        rows.append(
+            {
+                "Drużyna": team,
+                "Przed": before,
+                "Po": after,
+                "Zmiana p.p.": after - before,
+            }
+        )
+    impact_df = pd.DataFrame(rows)
+    st.dataframe(
+        impact_df.style.format(
+            {"Przed": "{:.1f}%", "Po": "{:.1f}%", "Zmiana p.p.": "{:+.1f}"},
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+    after_colors = [
+        IMPACT_GAIN_COLOR if row["Po"] > row["Przed"] else IMPACT_LOSS_COLOR
+        for _, row in impact_df.iterrows()
+    ]
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            name="Przed",
+            x=impact_df["Drużyna"],
+            y=impact_df["Przed"],
+            text=impact_df["Przed"],
+            marker_color=IMPACT_BEFORE_COLOR,
+        ),
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Po",
+            x=impact_df["Drużyna"],
+            y=impact_df["Po"],
+            text=impact_df["Po"],
+            marker_color=after_colors,
+        ),
+    )
+    fig.update_layout(
+        barmode="group",
+        xaxis_title="Drużyna",
+        yaxis_title="Procent",
+    )
+    fig.update_traces(
+        texttemplate="%{text:.1f}%",
+        textfont_size=BAR_VALUE_FONT_SIZE,
+        textfont_family="Arial Black",
+    )
+    st.plotly_chart(fig, use_container_width=True, key="inf_impact_chart")
+
+
+def display_infographic_reports(
+    stats: dict[str, Any],
+    groups_data: dict[str, list[tuple[str, int]]],
+    group_schedule: dict[str, list[tuple[str, str]]],
+    schedule_presets: dict[tuple[str, str], tuple[int, int]],
+) -> None:
+    """Show infographic-inspired reports directly in Streamlit."""
+    st.subheader("🖼️ Infografiki w aplikacji")
+    st.caption(
+        "To są te same informacje co w eksportowanych infografikach, ale "
+        "podane jako interaktywne sekcje Streamlit zamiast statycznych PNG."
+    )
+    report_type = st.radio(
+        "Wybierz raport",
+        [
+            "Drużyna",
+            "Grupa",
+            "Mecz grupowy",
+            "Wpływ wyniku",
+        ],
+        horizontal=True,
+        key="infographic_report_type",
+    )
+    if report_type == "Drużyna":
+        _show_team_infographic_report(stats, groups_data)
+    elif report_type == "Grupa":
+        _show_group_infographic_report(stats, groups_data)
+    elif report_type == "Mecz grupowy":
+        _show_match_infographic_report(stats, group_schedule)
+    else:
+        _show_match_impact_report(stats, group_schedule, schedule_presets)
 
 
 def display_results(stats: dict):
@@ -897,7 +1548,9 @@ def display_results(stats: dict):
         .query("Procent > 0")
         .reset_index(drop=True)
     )
-    st.plotly_chart(_bar(winner_df, "YlOrRd"), use_container_width=True)
+    st.plotly_chart(
+        _bar(winner_df, "YlOrRd"), use_container_width=True, key="winner_bar",
+    )
     # 2. Wykresy "szansa na dotarcie do etapu X lub dalej"
     REACH_STAGES = [
         ("🥈 Szansa na dotarcie do finału",     ("F", "Zwycięzca"),              "Reds"),
@@ -906,7 +1559,7 @@ def display_results(stats: dict):
         ("🔵 Szansa na dotarcie do 1/8 finału", ("R_16", "QF", "SF", "3RD", "F", "Zwycięzca"), "Blues"),
         ("⚪ Szansa na dotarcie do 1/16 finału", ("R_32", "R_16", "QF", "SF", "3RD", "F", "Zwycięzca"), "Greys"),
     ]
-    for title, reach_stages, colorscale in REACH_STAGES:
+    for idx, (title, reach_stages, colorscale) in enumerate(REACH_STAGES):
         st.subheader(title)
         df = (
             pd.DataFrame(
@@ -919,7 +1572,11 @@ def display_results(stats: dict):
             .query("Procent > 0")
             .reset_index(drop=True)
         )
-        st.plotly_chart(_bar(df, colorscale), use_container_width=True)
+        st.plotly_chart(
+            _bar(df, colorscale),
+            use_container_width=True,
+            key=f"reach_bar_{idx}",
+        )
     # 3. Heatmapa rozkładu etapów
     st.subheader("📊 Rozkład etapów dla każdej drużyny (%)")
     all_teams = sorted(team_exit.keys())
@@ -966,7 +1623,7 @@ def display_results(stats: dict):
             yaxis=dict(automargin=True),
             font=dict(size=12),
         )
-        st.plotly_chart(fig_heat, use_container_width=True)
+        st.plotly_chart(fig_heat, use_container_width=True, key="stage_heatmap")
     # 4. Rozkład wyników meczów grupowych
     display_group_score_distributions(stats, group_schedule)
 
@@ -1089,13 +1746,22 @@ if run_btn:
     st.success(f"✅ Ukończono {int(n_simulations):,} symulacji!")
 
 # Zakładki
-tab_groups, tab_butterfly, tab_probable, tab_results, tab_team, tab_info = st.tabs(
+(
+    tab_groups,
+    tab_butterfly,
+    tab_probable,
+    tab_results,
+    tab_team,
+    tab_infographics,
+    tab_info,
+) = st.tabs(
     [
         "📋 Grupy",
         "🏟️ Wizualizacja drabinki",
         "🎯 Najbardziej prawdopodobna drabinka",
         "📊 Wyniki symulacji",
         "👕 Szczegóły drużyn",
+        "🖼️ Infografiki",
         "ℹ️ Opis działania"
     ]
 )
@@ -1256,14 +1922,15 @@ with tab_probable:
     st.subheader("Najbardziej prawdopodobna drabinka")
     if "stats" in st.session_state and st.session_state["stats"].get("match_slot_pairs"):
         st.info(
-            "🎯 Drabinka pokazuje **najczęściej występującą parę drużyn** w każdym meczu "
-            "oraz **najczęstszego zwycięzcę** (procent przy nazwie drużyny). "
-            "„Najczęstsza para” = jak często te dwie drużyny spotkały się w tym miejscu drabinki."
+            "🎯 Drabinka łączy **modalne tabele grup** (osobno dla każdej grupy) "
+            "z najczęstszym składem awansujących trzecich miejsc. "
+            "W slotach „3. grupy …” wybierana jest drużyna, która najczęściej "
+            "pojawiała się w tym meczu symulacji. Każda drużyna występuje tylko raz."
         )
         st.subheader("Najbardziej prawdopodobne tabele grup")
         display_probable_groups(st.session_state["stats"])
         st.subheader("Najbardziej prawdopodobna drabinka pucharowa")
-        display_probable_bracket(st.session_state["stats"])
+        display_probable_bracket(st.session_state["stats"], knockout_raw)
     else:
         st.info("Uruchom symulację, aby zobaczyć najbardziej prawdopodobną drabinkę.")
 
@@ -1463,4 +2130,23 @@ with tab_team:
         st.info(
             "Ustaw parametry w panelu bocznym i kliknij **▶ Uruchom symulację**, "
             "aby zobaczyć szczegółowe statystyki drużyn."
+        )
+
+with tab_infographics:
+    if "stats" in st.session_state:
+        p = st.session_state["sim_params"]
+        st.caption(
+            f"Parametry: lambda_base={p['lambda_base']}, k={p['k']}, "
+            f"n={p['n']:,} symulacji"
+        )
+        display_infographic_reports(
+            st.session_state["stats"],
+            groups_data,
+            group_schedule,
+            schedule_presets,
+        )
+    elif not run_btn:
+        st.info(
+            "Uruchom symulację, aby zobaczyć raporty przygotowane na podstawie "
+            "danych z infografik."
         )

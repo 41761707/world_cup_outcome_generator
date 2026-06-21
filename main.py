@@ -33,6 +33,7 @@ def _accumulate_simulation_stats(
     qualified_thirds_counts: dict[tuple[tuple[str, str], ...], int],
     qualified_thirds_team_counts: dict[str, int],
     group_match_score_counts: dict[tuple[str, str], dict[tuple[int, int], int]],
+    group_phase_counts: dict[tuple[tuple[str, tuple[tuple[str, int, int, int], ...]], ...], int],
 ) -> None:
     """Merge one tournament run into aggregate counters."""
     for country, stage in result["exit_stages"].items():
@@ -61,6 +62,22 @@ def _accumulate_simulation_stats(
     qualified_thirds_counts[result["qualified_thirds_ranked"]] += 1
     for _, team_name in result["qualified_thirds_ranked"]:
         qualified_thirds_team_counts[team_name] += 1
+    phase_key = tuple(
+        (
+            gname,
+            tuple(
+                (
+                    name,
+                    stats["points"],
+                    stats["goal_diff"],
+                    stats["goals_scored"],
+                )
+                for name, stats in standings
+            ),
+        )
+        for gname, standings in sorted(result["group_standings"].items())
+    )
+    group_phase_counts[phase_key] += 1
 
 
 def run_monte_carlo(
@@ -108,6 +125,10 @@ def run_monte_carlo(
     group_match_score_counts: dict[tuple[str, str], dict[tuple[int, int], int]] = (
         defaultdict(lambda: defaultdict(int))
     )
+    group_phase_counts: dict[
+        tuple[tuple[str, tuple[tuple[str, int, int, int], ...]], ...],
+        int,
+    ] = defaultdict(int)
     last_bracket = None
     # TODO: Wizualizacja w tqdm
     for i in range(n):
@@ -136,6 +157,7 @@ def run_monte_carlo(
             qualified_thirds_counts,
             qualified_thirds_team_counts,
             group_match_score_counts,
+            group_phase_counts,
         )
         last_bracket = {
             "knockout": result["knockout_match_details"],
@@ -167,6 +189,7 @@ def run_monte_carlo(
         "group_match_score_counts": {
             key: dict(scores) for key, scores in group_match_score_counts.items()
         },
+        "group_phase_counts": dict(group_phase_counts),
         "n_simulations": n,
         "last_bracket": last_bracket
     }

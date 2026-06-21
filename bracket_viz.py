@@ -1,9 +1,14 @@
-"""Butterfly-style knockout bracket HTML renderer for Streamlit."""
-
 from __future__ import annotations
 
 import html
+from collections import Counter, defaultdict
+from pathlib import Path
 from typing import Any
+
+from wc_logic import assign_thirds_to_slots, load_knockout_schedule
+
+BASE_DIR = Path(__file__).resolve().parent
+KNOCKOUT_SCHEDULE_FILE = BASE_DIR / "schedule_knockout.txt"
 
 GRID_COLS = 8
 
@@ -383,7 +388,10 @@ def _render_round_row(
     parts.append(f'<div class="bfly-round-label">{round_label}</div>')
     parts.append('<div class="bfly-grid">')
     for idx, match_id in enumerate(match_ids):
-        t1, t2 = labels[match_id]
+        pair = labels.get(match_id)
+        if pair is None:
+            continue
+        t1, t2 = pair
         span_style = _grid_span(idx, col_span)
         card = _match_card(match_id, t1, t2, results.get(match_id))
         parts.append(
@@ -429,8 +437,10 @@ def _render_center(
     results: dict[str, dict[str, Any]],
 ) -> str:
     """Render final and third-place matches with distinct styling."""
-    t1f, t2f = labels["F"]
-    t1t, t2t = labels["3RD"]
+    final_pair = labels.get("F", ("—", "—"))
+    third_pair = labels.get("3RD", ("—", "—"))
+    t1f, t2f = final_pair
+    t1t, t2t = third_pair
     third_card = _match_card("3RD", t1t, t2t, results.get("3RD"))
     final_card = _match_card("F", t1f, t2f, results.get("F"))
     return (
@@ -504,34 +514,355 @@ def results_from_last_bracket(
     return out
 
 
+GroupPhaseKey = tuple[tuple[str, tuple[tuple[str, int, int, int], ...]], ...]
+TeamStandingRow = tuple[str, int, int, int]
+
+
+def marginal_group_standings_from_phase(
+    phase_counts: dict[GroupPhaseKey, int],
+) -> dict[str, dict[str, list[str]]]:
+    """Pick the modal table order independently for each group."""
+    order_counters: dict[str, Counter[tuple[str, ...]]] = defaultdict(Counter)
+    for phase, weight in phase_counts.items():
+        for gname, rows in phase:
+            order = tuple(row[0] for row in rows)
+            order_counters[gname][order] += weight
+    return {
+        gname: {"order": list(counter.most_common(1)[0][0])}
+        for gname, counter in order_counters.items()
+    }
+
+
+def marginal_third_place_rows_from_phase(
+    phase_counts: dict[GroupPhaseKey, int],
+) -> list[tuple[str, str, int, int, int]]:
+    """Return the modal third-place team and stats for every group."""
+    third_counters: dict[str, Counter[TeamStandingRow]] = defaultdict(Counter)
+    for phase, weight in phase_counts.items():
+        for gname, rows in phase:
+            if len(rows) >= 3:
+                third_counters[gname][rows[2]] += weight
+    rows: list[tuple[str, str, int, int, int]] = []
+    for gname, counter in third_counters.items():
+        team, pts, gd, gs = counter.most_common(1)[0][0]
+        rows.append((gname, team, pts, gd, gs))
+    return rows
+
+
+def most_probable_group_standings(
+    stats: dict[str, Any],
+) -> dict[str, dict[str, list[str]]]:
+    """Return per-group modal tables aggregated across all simulations."""
+    phase_counts = stats.get("group_phase_counts", {})
+    if phase_counts:
+        standings = marginal_group_standings_from_phase(phase_counts)
+    else:
+        standings = {}
+    for gname, counts in stats.get("group_standings_counts", {}).items():
+        if gname in standings:
+            continue
+        order, _ = max(counts.items(), key=lambda item: item[1])
+        standings[gname] = {"order": list(order)}
+    return standings
+
+
+def qualified_thirds_from_standings(
+    group_standings: dict[str, dict[str, list[str]]],
+    stats: dict[str, Any],
+) -> dict[str, str]:
+    """Return the eight best third-place teams from per-group modal rows."""
+    phase_counts = stats.get("group_phase_counts", {})
+    if phase_counts:
+        thirds = marginal_third_place_rows_from_phase(phase_counts)
+        thirds_sorted = sorted(
+            thirds,
+            key=lambda row: (row[2], row[3], row[4]),
+            reverse=True,
+        )
+        return {gname: team for gname, team, _, _, _ in thirds_sorted[:8]}
+    return most_probable_qualified_thirds_legacy(stats, group_standings)
+
+
+def most_probable_qualified_thirds_legacy(
+    stats: dict[str, Any],
+    group_standings: dict[str, dict[str, list[str]]],
+) -> dict[str, str]:
+    """Fallback when joint group-phase snapshots are unavailable."""
+    thirds_counts = stats.get("qualified_thirds_counts", {})
+    if thirds_counts:
+        best_ranked, _ = max(thirds_counts.items(), key=lambda item: item[1])
+        return {gname: team for gname, team in best_ranked}
+    team_counts = stats.get("qualified_thirds_team_counts", {})
+    if team_counts and group_standings:
+        qualified: dict[str, str] = {}
+        for team, _ in sorted(team_counts.items(), key=lambda x: -x[1])[:8]:
+            for gname, data in group_standings.items():
+                order = data["order"]
+                if len(order) >= 3 and order[2] == team and gname not in qualified:
+                    qualified[gname] = team
+                    break
+        return qualified
+    return {}
+
+
+def most_common_third_in_match_slot(
+    match_id: str,
+    groups: tuple[str, ...],
+    qualified_thirds: dict[str, str],
+    stats: dict[str, Any],
+    thirds_assignment: dict[frozenset[str], str],
+    *,
+    exclude: set[str] | None = None,
+) -> str | None:
+    """Pick the third-place team most often seen in this bracket slot."""
+    blocked = exclude or set()
+    candidates = {
+        qualified_thirds[group]
+        for group in groups
+        if group in qualified_thirds
+    } - blocked
+    if not candidates:
+        return None
+    pair_counts = stats.get("match_slot_pairs", {}).get(match_id, {})
+    team_counts: Counter[str] = Counter()
+    for (team1, team2), count in pair_counts.items():
+        if team1 in candidates:
+            team_counts[team1] += count
+        if team2 in candidates:
+            team_counts[team2] += count
+    if team_counts:
+        return team_counts.most_common(1)[0][0]
+    key = frozenset(groups)
+    group = thirds_assignment.get(key)
+    if group and group in qualified_thirds:
+        team = qualified_thirds[group]
+        if team not in blocked:
+            return team
+    return next(iter(candidates))
+
+
+def modal_winner_from_stats(
+    feeder_match_id: str,
+    stats: dict[str, Any],
+) -> str | None:
+    """Return the most common winner for a feeder match from raw stats."""
+    winners = stats.get("match_slot_winners", {}).get(feeder_match_id, {})
+    if not winners:
+        return None
+    return max(winners.items(), key=lambda item: item[1])[0]
+
+
+def modal_loser_from_stats(
+    feeder_match_id: str,
+    stats: dict[str, Any],
+) -> str | None:
+    """Return the most common loser for a feeder match from raw stats."""
+    winner = modal_winner_from_stats(feeder_match_id, stats)
+    if winner is None:
+        return None
+    pair_counts = stats.get("match_slot_pairs", {}).get(feeder_match_id, {})
+    for team1, team2 in pair_counts:
+        if winner == team1:
+            return team2
+        if winner == team2:
+            return team1
+    return None
+
+
+def modal_pair_from_stats(
+    match_id: str,
+    stats: dict[str, Any],
+    *,
+    exclude: set[str] | None = None,
+) -> tuple[str, str] | None:
+    """Return the most common team pair for one match slot."""
+    pair_counts = stats.get("match_slot_pairs", {}).get(match_id, {})
+    if not pair_counts:
+        return None
+    blocked = exclude or set()
+    ranked = sorted(pair_counts.items(), key=lambda item: -item[1])
+    for (team1, team2), _ in ranked:
+        if team1 not in blocked and team2 not in blocked:
+            return team1, team2
+    return ranked[0][0]
+
+
+def _record_probable_match(
+    match_id: str,
+    team1: str,
+    team2: str,
+    stats: dict[str, Any],
+    n: int,
+    labels: dict[str, tuple[str, str]],
+    results: dict[str, dict[str, Any]],
+    match_winners: dict[str, tuple[str, str]],
+) -> None:
+    """Store one resolved probable-bracket fixture."""
+    labels[match_id] = (team1, team2)
+    pair_pct, winner, winner_pct = slot_match_stats(
+        match_id, team1, team2, stats, n,
+    )
+    loser = team2 if winner == team1 else team1
+    match_winners[match_id] = (winner, loser)
+    results[match_id] = {
+        "team1": team1,
+        "team2": team2,
+        "winner": winner,
+        "pair_pct": pair_pct,
+        "winner_pct": winner_pct,
+    }
+
+
+def resolve_bracket_slot_name(
+    match_id: str,
+    slot: tuple,
+    group_standings: dict[str, dict[str, list[str]]],
+    qualified_thirds: dict[str, str],
+    match_winners: dict[str, tuple[str, str]],
+    stats: dict[str, Any],
+    thirds_assignment: dict[frozenset[str], str] | None = None,
+    *,
+    used_teams: set[str] | None = None,
+) -> str | None:
+    """Resolve one bracket slot to a team name."""
+    blocked = used_teams or set()
+    kind = slot[0]
+    if kind == "winner":
+        result = match_winners.get(slot[1])
+        if result:
+            return result[0]
+        return modal_winner_from_stats(slot[1], stats)
+    if kind == "loser":
+        result = match_winners.get(slot[1])
+        if result:
+            return result[1]
+        return modal_loser_from_stats(slot[1], stats)
+    _, groups, pos = slot
+    if len(groups) == 1:
+        data = group_standings.get(groups[0])
+        if data and pos <= len(data["order"]):
+            team = data["order"][pos - 1]
+            if team in blocked:
+                for candidate in data["order"]:
+                    if candidate not in blocked:
+                        return candidate
+            return team
+        return None
+    if pos == 3:
+        return most_common_third_in_match_slot(
+            match_id,
+            groups,
+            qualified_thirds,
+            stats,
+            thirds_assignment or {},
+            exclude=blocked,
+        )
+    for group in groups:
+        if group in qualified_thirds:
+            team = qualified_thirds[group]
+            if team not in blocked:
+                return team
+    return None
+
+
+def slot_match_stats(
+    match_id: str,
+    team1: str,
+    team2: str,
+    stats: dict[str, Any],
+    n: int,
+) -> tuple[float, str, float]:
+    """Return pair frequency and modal winner for a resolved fixture."""
+    pair_counts = stats.get("match_slot_pairs", {}).get(match_id, {})
+    pair_winners = stats.get("match_slot_pair_winners", {}).get(match_id, {})
+    count = pair_counts.get((team1, team2), 0) + pair_counts.get((team2, team1), 0)
+    if count > 0:
+        wins1 = (
+            pair_winners.get((team1, team2), {}).get(team1, 0)
+            + pair_winners.get((team2, team1), {}).get(team1, 0)
+        )
+        wins2 = (
+            pair_winners.get((team1, team2), {}).get(team2, 0)
+            + pair_winners.get((team2, team1), {}).get(team2, 0)
+        )
+        winner = team1 if wins1 >= wins2 else team2
+        return 100 * count / n, winner, 100 * max(wins1, wins2) / count
+    slot_winners = stats.get("match_slot_winners", {}).get(match_id, {})
+    wins1 = slot_winners.get(team1, 0)
+    wins2 = slot_winners.get(team2, 0)
+    total = wins1 + wins2
+    if total > 0:
+        winner = team1 if wins1 >= wins2 else team2
+        return 0.0, winner, 100 * max(wins1, wins2) / total
+    return 0.0, team1, 50.0
+
+
 def probable_bracket_from_stats(
     stats: dict[str, Any],
+    knockout_raw: list[tuple[str, tuple, tuple]] | None = None,
 ) -> tuple[dict[str, tuple[str, str]], dict[str, dict[str, Any]]]:
-    """Build labels and results for the most probable bracket from MC stats."""
+    """Build a globally consistent probable bracket from Monte Carlo stats."""
+    if knockout_raw is None:
+        knockout_raw = load_knockout_schedule(str(KNOCKOUT_SCHEDULE_FILE))
     n = stats["n_simulations"]
-    match_slot_pairs = stats["match_slot_pairs"]
-    match_slot_pair_winners = stats.get("match_slot_pair_winners", {})
+    group_standings = most_probable_group_standings(stats)
+    qualified_thirds = qualified_thirds_from_standings(group_standings, stats)
+    thirds_assignment = (
+        assign_thirds_to_slots(qualified_thirds, knockout_raw)
+        if qualified_thirds
+        else {}
+    )
+    match_winners: dict[str, tuple[str, str]] = {}
+    used_r32_teams: set[str] = set()
     labels: dict[str, tuple[str, str]] = {}
     results: dict[str, dict[str, Any]] = {}
-    for mid, pair_counts in match_slot_pairs.items():
-        best_pair, pair_count = max(pair_counts.items(), key=lambda x: x[1])
-        t1, t2 = best_pair
-        pair_pct = 100 * pair_count / n
-        pair_winner_counts = match_slot_pair_winners.get(mid, {}).get(
-            best_pair, {}
+    for match_id, slot1, slot2 in knockout_raw:
+        blocked = used_r32_teams if match_id.startswith("R_32") else None
+        team1 = resolve_bracket_slot_name(
+            match_id,
+            slot1,
+            group_standings,
+            qualified_thirds,
+            match_winners,
+            stats,
+            thirds_assignment,
+            used_teams=blocked,
         )
-        wins_t1 = pair_winner_counts.get(t1, 0)
-        wins_t2 = pair_winner_counts.get(t2, 0)
-        best_winner = t1 if wins_t1 >= wins_t2 else t2
-        winner_pct = (
-            100 * max(wins_t1, wins_t2) / pair_count if pair_count else 0.0
+        team2 = resolve_bracket_slot_name(
+            match_id,
+            slot2,
+            group_standings,
+            qualified_thirds,
+            match_winners,
+            stats,
+            thirds_assignment,
+            used_teams=blocked,
         )
-        labels[mid] = (t1, t2)
-        results[mid] = {
-            "team1": t1,
-            "team2": t2,
-            "winner": best_winner,
-            "pair_pct": pair_pct,
-            "winner_pct": winner_pct,
-        }
+        if not team1 or not team2:
+            blocked = used_r32_teams if match_id.startswith("R_32") else None
+            fallback = modal_pair_from_stats(match_id, stats, exclude=blocked)
+            if fallback:
+                team1, team2 = fallback
+        if not team1 or not team2:
+            fallback = modal_pair_from_stats(match_id, stats)
+            if fallback:
+                team1, team2 = fallback
+        if not team1 or not team2:
+            continue
+        if match_id.startswith("R_32"):
+            used_r32_teams.add(team1)
+            used_r32_teams.add(team2)
+        _record_probable_match(
+            match_id, team1, team2, stats, n, labels, results, match_winners,
+        )
+    for match_id, _, _ in knockout_raw:
+        if match_id in labels:
+            continue
+        fallback = modal_pair_from_stats(match_id, stats)
+        if not fallback:
+            continue
+        team1, team2 = fallback
+        _record_probable_match(
+            match_id, team1, team2, stats, n, labels, results, match_winners,
+        )
     return labels, results

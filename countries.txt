@@ -19,30 +19,30 @@ Ekwador:1938
 Wybrzeże Kości Słoniowej:1695
 Curacao:1434
 Szwecja:1712
-Holandia:1944
+Holandia:1948
 Tunezja:1628
 Japonia:1906
 Belgia:1893
 Egipt:1699
 Iran:1772
 Nowa Zelandia:1562
-Hiszpania:2155
+Hiszpania:2157
 Urugwaj:1892
 Republika Zielonego Przylądka:1578
-Arabia Saudyjska:1569
-Francja:2062
+Arabia Saudyjska:1576
+Francja:2063
 Norwegia:1914
-Senegal:1867
+Senegal:1860
 Irak:1618
 Austria:1830
-Argentyna:2114
-Algieria:1760
+Argentyna:2115
+Algieria:1772
 Jordania:1680
-Portugalia:1986
+Portugalia:1989
 Kolumbia:1982
-DR Konga:1661
-Uzbekistan:1718
-Chorwacja:1911
-Anglia:2021
+DR Konga:1652
+Uzbekistan:1714
+Chorwacja:1912
+Anglia:2024
 Ghana:1510
 Panama:1730

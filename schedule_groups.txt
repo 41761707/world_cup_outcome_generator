@@ -1,71 +1,71 @@
 A: Meksyk - Republika Południowej Afryki 2-0
 A: Korea Południowa - Czechy 2-1
-A: Czechy - Republika Południowej Afryki
-A: Meksyk - Korea Południowa
+A: Czechy - Republika Południowej Afryki 1-1
+A: Meksyk - Korea Południowa 1-0
 A: Czechy - Meksyk
 A: Republika Południowej Afryki - Korea Południowa
-B: Kanada - Bośnia i Hercegowina 
-B: Katar - Szwajcaria
-B: Szwajcaria - Bośnia i Hercegowina
-B: Kanada - Katar
+B: Kanada - Bośnia i Hercegowina 1-1
+B: Katar - Szwajcaria 1-1
+B: Szwajcaria - Bośnia i Hercegowina 4-1
+B: Kanada - Katar 6-0
 B: Szwajcaria - Kanada
 B: Bośnia i Hercegowina - Katar
-C: Brazylia - Maroko
-C: Haiti - Szkocja
-C: Szkocja - Maroko
-C: Brazylia - Haiti
+C: Brazylia - Maroko 1-1
+C: Haiti - Szkocja 0-1
+C: Szkocja - Maroko 0-1
+C: Brazylia - Haiti 3-0
 C: Szkocja - Brazylia
 C: Maroko - Haiti
-D: USA - Paragwaj
-D: Australia - Turcja
-D: USA - Australia
-D: Turcja - Paragwaj
+D: USA - Paragwaj 4-1
+D: Australia - Turcja 2-0
+D: USA - Australia 2-0
+D: Turcja - Paragwaj 0-1
 D: Turcja - USA
 D: Paragwaj - Australia
-E: Niemcy - Curacao
-E: Wybrzeże Kości Słoniowej - Ekwador
-E: Niemcy - Wybrzeże Kości Słoniowej
-E: Ekwador - Curacao
+E: Niemcy - Curacao 7-1
+E: Wybrzeże Kości Słoniowej - Ekwador 1-0
+E: Niemcy - Wybrzeże Kości Słoniowej 2-1
+E: Ekwador - Curacao 0-0
 E: Curacao - Wybrzeże Kości Słoniowej
 E: Ekwador - Niemcy
-F: Holandia - Japonia
-F: Szwecja - Tunezja
-F: Holandia - Szwecja
+F: Holandia - Japonia 2-2
+F: Szwecja - Tunezja 5-1
+F: Holandia - Szwecja 5-1
 F: Tunezja - Japonia
 F: Japonia - Szwecja
 F: Tunezja - Holandia
-G: Belgia - Egipt
-G: Iran - Nowa Zelandia
+G: Belgia - Egipt 1-1
+G: Iran - Nowa Zelandia 2-2
 G: Belgia - Iran
 G: Nowa Zelandia - Egipt
 G: Egipt - Iran
 G: Nowa Zelandia - Belgia
-H: Hiszpania - Republika Zielonego Przylądka
-H: Arabia Saudyjska - Urugwaj
+H: Hiszpania - Republika Zielonego Przylądka 0-0
+H: Arabia Saudyjska - Urugwaj 1-1
 H: Hiszpania - Arabia Saudyjska
 H: Urugwaj - Republika Zielonego Przylądka
 H: Republika Zielonego Przylądka - Arabia Saudyjska
 H: Urugwaj - Hiszpania
-I: Francja - Senegal
-I: Irak - Norwegia
+I: Francja - Senegal 3-1
+I: Irak - Norwegia 1-4
 I: Francja - Irak
 I: Norwegia - Senegal
 I: Norwegia - Francja
 I: Senegal - Irak
-J: Argentyna - Algieria
-J: Austria - Jordania
+J: Argentyna - Algieria 3-0
+J: Austria - Jordania 3-1
 J: Argentyna - Austria
 J: Jordania - Algieria
 J: Algieria - Austria
 J: Jordania - Argentyna
-K: Portugalia - DR Konga
-K: Uzbekistan - Kolumbia
+K: Portugalia - DR Konga 1-1
+K: Uzbekistan - Kolumbia 1-3
 K: Portugalia - Uzbekistan
 K: Kolumbia - DR Konga
 K: Kolumbia - Portugalia
 K: DR Konga - Uzbekistan 
-L: Anglia - Chorwacja
-L: Ghana - Panama
+L: Anglia - Chorwacja 4-2
+L: Ghana - Panama 1-0
 L: Anglia - Ghana
 L: Panama - Chorwacja
 L: Panama - Anglia
