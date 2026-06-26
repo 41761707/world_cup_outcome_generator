@@ -3,6 +3,11 @@ import sys
 from typing import Any
 import numpy as np
 
+from third_place_lookup import (
+    lookup_third_place_assignments,
+    winner_third_slot_frozensets,
+)
+
 
 def _match_points(goals_for: int, goals_against: int) -> int:
     """Return table points for one team in one match."""
@@ -660,39 +665,15 @@ def assign_thirds_to_slots(
     qualified_thirds: dict[str, Country],
     knockout_raw: list[tuple[str, tuple, tuple]],
 ) -> dict[frozenset[str], str]:
-    """Assign qualified third-place teams to bracket slots via matching."""
-    slot_sets = []
-    seen: set[frozenset[str]] = set()
-    for _, s1, s2 in knockout_raw:
-        for slot in (s1, s2):
-            if slot[0] == "group_pos" and len(slot[1]) > 1 and slot[2] == 3:
-                key = frozenset(slot[1])
-                if key not in seen:
-                    seen.add(key)
-                    slot_sets.append(key)
-
-    qualified_set = set(qualified_thirds.keys())
-    group_to_slots = {
-        group: [idx for idx, slot in enumerate(slot_sets) if group in slot]
-        for group in qualified_set
-    }
-    match_slot: dict[int, str] = {}
-
-    def augment(group: str, visited: set[int]) -> bool:
-        for slot_idx in group_to_slots.get(group, []):
-            if slot_idx in visited:
-                continue
-            visited.add(slot_idx)
-            prev = match_slot.get(slot_idx)
-            if prev is None or augment(prev, visited):
-                match_slot[slot_idx] = group
-                return True
-        return False
-
-    for group in qualified_set:
-        augment(group, set())
-
-    return {slot_sets[i]: group for i, group in match_slot.items()}
+    """Assign qualified third-place teams using FIFA Annex C lookup table."""
+    slot_by_winner = lookup_third_place_assignments(set(qualified_thirds))
+    winner_to_frozenset = winner_third_slot_frozensets(knockout_raw)
+    assignment: dict[frozenset[str], str] = {}
+    for winner_group, third_group in slot_by_winner.items():
+        slot_key = winner_to_frozenset.get(winner_group)
+        if slot_key is not None:
+            assignment[slot_key] = third_group
+    return assignment
 
 
 def resolve_slot(

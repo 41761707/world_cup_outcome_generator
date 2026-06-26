@@ -70,6 +70,11 @@ IMPACT_GAIN_COLOR = "#40c057"
 IMPACT_LOSS_COLOR = "#fa5252"
 BAR_VALUE_FONT_SIZE = 18
 TABLE_VALUE_FONT_SIZE = "1.05rem"
+REACH_R32_COLORSCALE = [
+    [0.0, "#868e96"],
+    [0.5, "#69db7c"],
+    [1.0, "#51cf66"],
+]
 
 
 def _schedule_groups_mtime() -> float:
@@ -490,6 +495,221 @@ def display_last_bracket(last_bracket: dict) -> None:
                     _match_card_result(m["match_id"], m),
                     unsafe_allow_html=True,
                 )
+
+
+def _collect_ko_widget_values(
+    rounds_ko: dict[str, list[tuple[str, Any, Any]]],
+    ko_clear_count: int,
+) -> dict[str, tuple[int, int, str]]:
+    """Read knockout score widgets from session state."""
+    widget_ko_raw: dict[str, tuple[int, int, str]] = {}
+    for rnd_matches in rounds_ko.values():
+        for mid, _, _ in rnd_matches:
+            s1 = st.session_state.get(f"fko_{mid}_1_{ko_clear_count}")
+            s2 = st.session_state.get(f"fko_{mid}_2_{ko_clear_count}")
+            pen = st.session_state.get(
+                f"fko_{mid}_pen_{ko_clear_count}", "—",
+            )
+            if s1 is not None and s2 is not None:
+                widget_ko_raw[mid] = (int(s1), int(s2), pen)
+    return widget_ko_raw
+
+
+def _persist_fixed_knockout_results(
+    final_ko_raw: dict[str, tuple[int, int, str]],
+    rounds_ko: dict[str, list[tuple[str, Any, Any]]],
+    fixed_group_results: dict[tuple[str, str], tuple[int, int]] | None,
+    group_schedule: dict[str, list[tuple[str, str]]],
+    groups_data: dict[str, list[tuple[str, int]]],
+    knockout_raw: list[tuple[str, Any, Any]],
+) -> dict[str, tuple[int, int, str | None]]:
+    """Convert widget values to simulation-ready knockout result map."""
+    gs_f, qt_f, ko_f = _compute_resolved_slots(
+        fixed_group_results,
+        group_schedule,
+        groups_data,
+        knockout_raw,
+        final_ko_raw,
+    )
+    fixed_ko_inputs: dict[str, tuple[int, int, str | None]] = {}
+    for rnd_matches in rounds_ko.values():
+        for mid, sl1, sl2 in rnd_matches:
+            if mid not in final_ko_raw:
+                continue
+            s1, s2, pen_label = final_ko_raw[mid]
+            if s1 != s2:
+                fixed_ko_inputs[mid] = (s1, s2, None)
+                continue
+            t1 = _resolve_single_slot_inner(sl1, gs_f, qt_f, ko_f)
+            if pen_label == t1:
+                pen_winner = "slot1"
+            elif pen_label != "—":
+                pen_winner = "slot2"
+            else:
+                pen_winner = None
+            if pen_winner is not None:
+                fixed_ko_inputs[mid] = (s1, s2, pen_winner)
+    return fixed_ko_inputs
+
+
+def _render_knockout_match_input_row(
+    mid: str,
+    s1_slot: tuple,
+    s2_slot: tuple,
+    gs_res: dict[str, dict[str, Any]],
+    qt_res: dict[str, str],
+    ko_res: dict[str, tuple[str, str]],
+    ko_clear_count: int,
+) -> None:
+    """Render one knockout match score row in the input form."""
+    label1 = (
+        _resolve_single_slot_inner(s1_slot, gs_res, qt_res, ko_res)
+        or _fmt_slot(s1_slot)
+    )
+    label2 = (
+        _resolve_single_slot_inner(s2_slot, gs_res, qt_res, ko_res)
+        or _fmt_slot(s2_slot)
+    )
+    col_t1, col_s1, col_dash, col_s2, col_t2, col_pen = st.columns(
+        [2.5, 1, 0.3, 1, 2.5, 2.5],
+    )
+    col_t1.markdown(
+        f"<div style='padding-top:6px;text-align:right;"
+        f"font-size:0.85rem'>{label1}</div>",
+        unsafe_allow_html=True,
+    )
+    col_s1.number_input(
+        "g1",
+        min_value=0,
+        max_value=30,
+        value=None,
+        key=f"fko_{mid}_1_{ko_clear_count}",
+        label_visibility="collapsed",
+    )
+    col_dash.markdown(
+        "<div style='padding-top:6px;text-align:center'>–</div>",
+        unsafe_allow_html=True,
+    )
+    col_s2.number_input(
+        "g2",
+        min_value=0,
+        max_value=30,
+        value=None,
+        key=f"fko_{mid}_2_{ko_clear_count}",
+        label_visibility="collapsed",
+    )
+    col_t2.markdown(
+        f"<div style='padding-top:6px;font-size:0.85rem'>{label2}</div>",
+        unsafe_allow_html=True,
+    )
+    col_pen.selectbox(
+        "Karne (przy remisie)",
+        options=["—", label1, label2],
+        index=0,
+        key=f"fko_{mid}_pen_{ko_clear_count}",
+        label_visibility="collapsed",
+        help=(
+            "Wskaż zwycięzcę po karnych — tylko gdy wynik po 90 min. "
+            "jest remisem."
+        ),
+    )
+
+
+def display_knockout_result_inputs(
+    group_schedule: dict[str, list[tuple[str, str]]],
+    groups_data: dict[str, list[tuple[str, int]]],
+    knockout_raw: list[tuple[str, Any, Any]],
+    fixed_group_results: dict[tuple[str, str], tuple[int, int]] | None,
+) -> None:
+    """Form for locking knockout match scores used in every simulation."""
+    with st.expander(
+        "✏️ Wprowadź własne wyniki meczów pucharowych (opcjonalnie)",
+        expanded=False,
+    ):
+        st.caption(
+            "Wypełnij wyniki dla wybranych meczów pucharowych — zostaną one "
+            "użyte we wszystkich symulacjach jako stały wynik. Drużyny "
+            "oznaczone są etykietami slotów (np. '1. Gr. A'), bo ich "
+            "tożsamość zależy od wyników grupowych. Przy remisie "
+            "(po 90 min.) wskaż zwycięzcę po karnych."
+        )
+        rounds_ko = _group_by_round(knockout_raw)
+        ko_clear_count = st.session_state.get("ko_clear_count", 0)
+        widget_ko_raw = _collect_ko_widget_values(rounds_ko, ko_clear_count)
+
+        gs_res, qt_res, ko_res = _compute_resolved_slots(
+            fixed_group_results,
+            group_schedule,
+            groups_data,
+            knockout_raw,
+            widget_ko_raw,
+        )
+
+        for rnd in ROUND_ORDER:
+            if rnd not in rounds_ko:
+                continue
+            st.markdown(f"**{ROUND_LABELS[rnd]}**")
+            for mid, s1_slot, s2_slot in sorted(
+                rounds_ko[rnd], key=lambda x: x[0],
+            ):
+                _render_knockout_match_input_row(
+                    mid,
+                    s1_slot,
+                    s2_slot,
+                    gs_res,
+                    qt_res,
+                    ko_res,
+                    ko_clear_count,
+                )
+
+        col_apply_ko, col_clear_ko = st.columns(2)
+        if col_apply_ko.button(
+            "✅ Zastosuj wyniki pucharowe",
+            use_container_width=True,
+            key="apply_ko_btn",
+        ):
+            final_ko_raw = _collect_ko_widget_values(rounds_ko, ko_clear_count)
+            fixed_ko_inputs = _persist_fixed_knockout_results(
+                final_ko_raw,
+                rounds_ko,
+                fixed_group_results,
+                group_schedule,
+                groups_data,
+                knockout_raw,
+            )
+            st.session_state["fixed_knockout_results"] = (
+                fixed_ko_inputs or None
+            )
+            n_fixed_ko = len(fixed_ko_inputs)
+            if n_fixed_ko:
+                st.success(
+                    f"Zablokowano {n_fixed_ko} "
+                    f"{'mecz' if n_fixed_ko == 1 else 'mecze' if n_fixed_ko in (2, 3, 4) else 'meczów'} "
+                    "pucharowych."
+                )
+            else:
+                st.success(
+                    "Wyniki wyczyszczone — wszystkie mecze pucharowe "
+                    "będą losowane."
+                )
+        elif col_clear_ko.button(
+            "🗑️ Wyczyść wszystkie",
+            use_container_width=True,
+            key="clear_ko_btn",
+        ):
+            st.session_state["fixed_knockout_results"] = None
+            st.session_state["ko_clear_count"] = ko_clear_count + 1
+            st.success("Wszystkie wyniki pucharowe zostały wyczyszczone.")
+        elif "fixed_knockout_results" not in st.session_state:
+            st.session_state["fixed_knockout_results"] = None
+        saved_ko = st.session_state.get("fixed_knockout_results")
+        if saved_ko:
+            n_saved_ko = len(saved_ko)
+            st.info(
+                f"Aktualnie zapisano: {n_saved_ko} "
+                f"{'mecz' if n_saved_ko == 1 else 'mecze' if n_saved_ko in (2, 3, 4) else 'meczów'} "
+                "pucharowych."
+            )
 
 
 def display_butterfly_bracket(
@@ -1557,7 +1777,7 @@ def display_results(stats: dict):
         ("🥊 Szansa na dotarcie do półfinału",  ("SF", "3RD", "F", "Zwycięzca"), "Oranges"),
         ("⚽ Szansa na dotarcie do ćwierćfinału", ("QF", "SF", "3RD", "F", "Zwycięzca"), "YlOrBr"),
         ("🔵 Szansa na dotarcie do 1/8 finału", ("R_16", "QF", "SF", "3RD", "F", "Zwycięzca"), "Blues"),
-        ("⚪ Szansa na dotarcie do 1/16 finału", ("R_32", "R_16", "QF", "SF", "3RD", "F", "Zwycięzca"), "Greys"),
+        ("⚪ Szansa na dotarcie do 1/16 finału", ("R_32", "R_16", "QF", "SF", "3RD", "F", "Zwycięzca"), REACH_R32_COLORSCALE),
     ]
     for idx, (title, reach_stages, colorscale) in enumerate(REACH_STAGES):
         st.subheader(title)
@@ -1902,6 +2122,20 @@ with tab_groups:
 
 with tab_butterfly:
     st.subheader("Wizualizacja drabinki")
+    _use_presets_ko = (
+        st.session_state.get("use_presets", bool(schedule_presets))
+        and bool(schedule_presets)
+    )
+    display_knockout_result_inputs(
+        group_schedule,
+        groups_data,
+        knockout_raw,
+        _effective_fixed_group_results(
+            schedule_presets,
+            _use_presets_ko,
+            st.session_state.get("fixed_group_results"),
+        ),
+    )
     st.caption(
         "Drabinka w układzie „motylkowym”: finał w środku, górna połowa (mecze 1–8 "
         "w 1/16) zbiega w dół, dolna połowa (mecze 9–16) zbiega do środka."

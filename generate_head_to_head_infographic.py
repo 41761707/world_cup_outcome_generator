@@ -297,26 +297,18 @@ def _draw_goals_panel(ax: plt.Axes, data: HeadToHeadData) -> None:
                 ha="center",
                 va="bottom",
             )
-    ax.text(
-        chart_left,
-        0.08,
-        "Łączna liczba bramek",
-        fontsize=12,
-        color="#868e96",
-        ha="left",
-    )
 
     btts_left = 0.72
     btts_rows = [
         ("Obie strzelą", data.btts_yes_pct, "#40c057"),
-        ("Nie obie strzelą", data.btts_no_pct, "#fa5252"),
+        ("Obie nie strzelą", data.btts_no_pct, "#fa5252"),
     ]
     ax.text(
         btts_left, 0.70, "BTTS",
         fontsize=16, fontweight="bold", color="#212529", va="center",
     )
     for idx, (label, pct, color) in enumerate(btts_rows):
-        y = 0.48 - idx * 0.22
+        y = 0.40 - idx * 0.25
         add_rounded_rect(
             ax,
             (btts_left, y),
@@ -345,7 +337,7 @@ def _draw_goals_panel(ax: plt.Axes, data: HeadToHeadData) -> None:
             va="bottom",
         )
         ax.text(
-            btts_left + 0.24,
+            btts_left + 0.12,
             y + 0.06,
             f"{pct:.1f}%",
             fontsize=18,

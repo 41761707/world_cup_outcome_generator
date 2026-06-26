@@ -2,71 +2,71 @@ A: Meksyk - Republika Południowej Afryki 2-0
 A: Korea Południowa - Czechy 2-1
 A: Czechy - Republika Południowej Afryki 1-1
 A: Meksyk - Korea Południowa 1-0
-A: Czechy - Meksyk
-A: Republika Południowej Afryki - Korea Południowa
+A: Czechy - Meksyk 0-3
+A: Republika Południowej Afryki - Korea Południowa 1-0
 B: Kanada - Bośnia i Hercegowina 1-1
 B: Katar - Szwajcaria 1-1
 B: Szwajcaria - Bośnia i Hercegowina 4-1
 B: Kanada - Katar 6-0
-B: Szwajcaria - Kanada
-B: Bośnia i Hercegowina - Katar
+B: Szwajcaria - Kanada 2-1
+B: Bośnia i Hercegowina - Katar 3-1
 C: Brazylia - Maroko 1-1
 C: Haiti - Szkocja 0-1
 C: Szkocja - Maroko 0-1
 C: Brazylia - Haiti 3-0
-C: Szkocja - Brazylia
-C: Maroko - Haiti
+C: Szkocja - Brazylia 0-3
+C: Maroko - Haiti 4-2
 D: USA - Paragwaj 4-1
 D: Australia - Turcja 2-0
 D: USA - Australia 2-0
 D: Turcja - Paragwaj 0-1
-D: Turcja - USA
-D: Paragwaj - Australia
+D: Turcja - USA 3-2
+D: Paragwaj - Australia 0-0
 E: Niemcy - Curacao 7-1
 E: Wybrzeże Kości Słoniowej - Ekwador 1-0
 E: Niemcy - Wybrzeże Kości Słoniowej 2-1
 E: Ekwador - Curacao 0-0
-E: Curacao - Wybrzeże Kości Słoniowej
-E: Ekwador - Niemcy
+E: Curacao - Wybrzeże Kości Słoniowej 0-2
+E: Ekwador - Niemcy 2-1
 F: Holandia - Japonia 2-2
 F: Szwecja - Tunezja 5-1
 F: Holandia - Szwecja 5-1
-F: Tunezja - Japonia
-F: Japonia - Szwecja
-F: Tunezja - Holandia
+F: Tunezja - Japonia 0-4
+F: Japonia - Szwecja 1-1
+F: Tunezja - Holandia 1-3
 G: Belgia - Egipt 1-1
 G: Iran - Nowa Zelandia 2-2
-G: Belgia - Iran
-G: Nowa Zelandia - Egipt
+G: Belgia - Iran 0-0
+G: Nowa Zelandia - Egipt 1-3
 G: Egipt - Iran
 G: Nowa Zelandia - Belgia
 H: Hiszpania - Republika Zielonego Przylądka 0-0
 H: Arabia Saudyjska - Urugwaj 1-1
-H: Hiszpania - Arabia Saudyjska
-H: Urugwaj - Republika Zielonego Przylądka
+H: Hiszpania - Arabia Saudyjska 4-0
+H: Urugwaj - Republika Zielonego Przylądka 2-2
 H: Republika Zielonego Przylądka - Arabia Saudyjska
 H: Urugwaj - Hiszpania
 I: Francja - Senegal 3-1
 I: Irak - Norwegia 1-4
-I: Francja - Irak
-I: Norwegia - Senegal
-I: Norwegia - Francja
-I: Senegal - Irak
+I: Francja - Irak 3-0
+I: Norwegia - Senegal 3-2
+I: Norwegia - Francja 1-4
+I: Senegal - Irak 5-0
 J: Argentyna - Algieria 3-0
 J: Austria - Jordania 3-1
-J: Argentyna - Austria
-J: Jordania - Algieria
+J: Argentyna - Austria 3-0
+J: Jordania - Algieria 1-2
 J: Algieria - Austria
 J: Jordania - Argentyna
 K: Portugalia - DR Konga 1-1
 K: Uzbekistan - Kolumbia 1-3
-K: Portugalia - Uzbekistan
-K: Kolumbia - DR Konga
+K: Portugalia - Uzbekistan 5-0
+K: Kolumbia - DR Konga 1-0
 K: Kolumbia - Portugalia
 K: DR Konga - Uzbekistan 
 L: Anglia - Chorwacja 4-2
 L: Ghana - Panama 1-0
-L: Anglia - Ghana
-L: Panama - Chorwacja
+L: Anglia - Ghana 0-0
+L: Panama - Chorwacja 0-1
 L: Panama - Anglia
 L: Chorwacja - Ghana
